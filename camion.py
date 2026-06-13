@@ -493,16 +493,24 @@ def draw_map(game, S, background, trucks, spawn_timer):
         S.drawCitySprite(x, y)
 
     # Symboles de forêt (Emoji 🌱/🌲)
+# Symboles de forêt (Affichage à 3 étapes basé sur la ressource restante)
     for (x, y), wood in game.forests.items():
         if S.pintree_img and S.deadtree_img:
-            if wood > 2:
-                img = S.pintree_img
+            if wood > 3:
+                # ÉTAPE 1 : De base (5 ou 4 bois restants), on affiche pintree.png
+                S.drawImage(x, y, S.pintree_img)
+            elif wood > 0:
+                # ÉTAPE 2 : Après les premiers passages (3, 2 ou 1 bois restants), on passe à deadtree.png
+                S.drawImage(x, y, S.deadtree_img)
             else:
-                img = S.deadtree_img
-            S.drawImage(x, y, img)
+                # ÉTAPE 3 : Forêt épuisée (0 bois), on ne blitte AUCUNE image (on voit le sol de la route)
+                pass
         else:
-            if wood > 0:
-                S.drawText(x, y, "🌲" if wood > 2 else "🌱", big=False, centered=True)
+            # Rendu textuel de secours (Fallback) si les images ne chargent pas
+            if wood > 3:
+                S.drawText(x, y, "🌲", big=False, centered=True)
+            elif wood > 0:
+                S.drawText(x, y, "🌱", big=False, centered=True)
             else:
                 S.drawText(x, y, "❌", big=False, centered=True)
 
