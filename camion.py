@@ -13,7 +13,7 @@ BLOCKED_INIT    = 999
 TRUCK_SPEED     = 4.0        
 LOAD_TIME       = 1.0        
 UNLOAD_TIME     = 0.8        
-WOOD_PER_FOREST = 5          
+WOOD_PER_FOREST = 2          
 MAX_TRUCKS      = 5          
 SPAWN_INTERVAL  = 5.0        
 DEFAULT_ZOOM    = 45         
@@ -579,22 +579,18 @@ def draw_map(game, S, background, trucks, spawn_timer):
             
         S.drawCitySprite(x, y)
 
-    # Symboles de forêt (Emoji 🌱/🌲)
-# Symboles de forêt (Affichage à 3 étapes basé sur la ressource restante)
+    # Symboles de forêt
     for (x, y), wood in game.forests.items():
         if S.pintree_img and S.deadtree_img:
-            if wood > 3:
-                # ÉTAPE 1 : De base (5 ou 4 bois restants), on affiche pintree.png
+            if wood == WOOD_PER_FOREST: #2 interactions par arbre
                 S.drawImage(x, y, S.pintree_img)
             elif wood > 0:
-                # ÉTAPE 2 : Après les premiers passages (3, 2 ou 1 bois restants), on passe à deadtree.png
                 S.drawImage(x, y, S.deadtree_img)
             else:
-                # ÉTAPE 3 : Forêt épuisée (0 bois), on ne blitte AUCUNE image (on voit le sol de la route)
                 pass
         else:
             # Rendu textuel de secours (Fallback) si les images ne chargent pas
-            if wood > 3:
+            if wood == WOOD_PER_FOREST:
                 S.drawText(x, y, "🌲", big=False, centered=True)
             elif wood > 0:
                 S.drawText(x, y, "🌱", big=False, centered=True)
