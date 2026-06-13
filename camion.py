@@ -14,12 +14,12 @@ TRUCK_SPEED     = 4.0
 LOAD_TIME       = 1.0        
 UNLOAD_TIME     = 0.8        
 WOOD_PER_FOREST = 5          
-MAX_TRUCKS      = 5          # Maximum 5 camions simultanés
-SPAWN_INTERVAL  = 5.0        # Un nouveau camion toutes les 5 secondes
+MAX_TRUCKS      = 5          
+SPAWN_INTERVAL  = 5.0        
 DEFAULT_ZOOM    = 45         
 MIN_ZOOM        = 20
 
-# Nom du dossier contenant les images
+# Dossier des images
 ASSETS_DIR      = "assets"
 
 
@@ -60,7 +60,7 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     return iterations
 
 
-# ── Structure de la Carte ───────────────────────────────────────────────────
+# ── ANCIENNE HARİTA YAPISI (20x12) ───────────────────────────────────────────
 
 MAP_TEXT = """
 ####################
@@ -72,8 +72,8 @@ MAP_TEXT = """
 # #        ### #   #
 # # ########## ### #
 # # #            # #
-#   # ########## # #
-#######       #VVVVV#
+#   # ########   # #
+#######       VVVVV#
 ####################
 """
 
@@ -176,7 +176,7 @@ class Screen:
         self.W = nx * ZOOM
         self.H = (ny + 1) * ZOOM 
         self.screen = pygame.display.set_mode((self.W, self.H))
-        pygame.display.set_caption("Transport Tycoon - Camions Proportionnels")
+        pygame.display.set_caption("Transport Tycoon - Resimli Kamyonlar")
         self.clock = pygame.time.Clock()
         self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.45)), bold=True)
         self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.35)))
@@ -190,12 +190,9 @@ class Screen:
             try:
                 img = pygame.image.load(path).convert_alpha()
                 
-                # ── CONSERVATION DU RATIO D'ASPECT ──
+                # Conservation du ratio d'aspect
                 orig_w, orig_h = img.get_size()
-                
-                # Largeur cible fixe (55% de la cellule pour rester fin et élégant)
                 target_w = int(ZOOM * 0.55) 
-                # Calcul de la hauteur proportionnelle
                 target_h = int(target_w * (orig_h / orig_w))
                 
                 # Sécurité anti-dépassement vertical
@@ -207,21 +204,19 @@ class Screen:
                 self.truck_images.append(img)
             except Exception as e:
                 print(f"Erreur : Impossible de charger {path} ! Détails : {e}")
-                # Surface de secours en cas d'image manquante
                 fallback = pygame.Surface((int(ZOOM * 0.5), int(ZOOM * 0.8)), pygame.SRCALPHA)
                 pygame.draw.rect(fallback, (200, 50, 50), (0, 0, int(ZOOM * 0.5), int(ZOOM * 0.8)), border_radius=3)
                 self.truck_images.append(fallback)
 
-        # Charger les images d'arbres si disponibles
+        # ── CHARGEMENT DE BRICKHOUSE.PNG ──
+        self.city_asset = None
+        city_asset_path = os.path.join(ASSETS_DIR, "BrickHouse.png")
         try:
-            pintree = pygame.image.load(os.path.join(ASSETS_DIR, 'pintree.png')).convert_alpha()
-            deadtree = pygame.image.load(os.path.join(ASSETS_DIR, 'deadtree.png')).convert_alpha()
-            self.pintree_img = pygame.transform.scale(pintree, (ZOOM, ZOOM))
-            self.deadtree_img = pygame.transform.scale(deadtree, (ZOOM, ZOOM))
+            self.city_asset = pygame.image.load(city_asset_path).convert_alpha()
+            # Redimensionner pour tenir dans une case de ville (par exemple 80% du ZOOM)
+            self.city_asset = pygame.transform.scale(self.city_asset, (int(ZOOM * 0.8), int(ZOOM * 0.8)))
         except Exception as e:
-            self.pintree_img = None
-            self.deadtree_img = None
-            print(f"Info: tree assets not loaded ({e}). Falling back to text markers.")
+            print(f"Erreur : Impossible de charger BrickHouse.png ! Ville vide. Détails : {e}")
 
     def grid_to_screen(self, x, y):
         return int(x * ZOOM), int(y * ZOOM)
@@ -260,13 +255,22 @@ class Screen:
         # Application de la rotation
         rotated_img = pygame.transform.rotate(base_img, angle)
         
-        # Centrage parfait sur le milieu de la case de route
+        # 'center=(cx, cy)' pour centrer parfaitement sur le milieu de la case
         rect = rotated_img.get_rect(center=(cx, cy))
+        
         self.screen.blit(rotated_img, rect.topleft)
 
         # Indicateur visuel discret si le camion est chargé
         if loaded:
             pygame.draw.circle(self.screen, (139, 90, 43), (cx, cy), 3)
+
+    # ── FONCTION POUR DESSINER L'ASSET DE VILLE ──
+    def drawCitySprite(self, x, y):
+        if self.city_asset:
+            sx, sy = self.grid_to_screen(x, y)
+            # Centrer l'asset de ville dans la case de ville
+            rect = self.city_asset.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
+            self.screen.blit(self.city_asset, rect.topleft)
 
     def show(self):
         pygame.display.flip()
@@ -287,7 +291,7 @@ class Truck:
         self.x = self.cx + 0.5
         self.y = self.cy + 0.5
         
-        self.dir  = (0.0, -1.0) # Initialisation orientée vers le haut
+        self.dir  = (0.0, -1.0) 
         self.speed = TRUCK_SPEED + random.uniform(-0.2, 0.2)
 
         self.loaded   = False
@@ -423,7 +427,7 @@ class Truck:
         S.drawTruckSprite(self.x, self.y, self.dir[0], self.dir[1], self.img_index, self.loaded)
 
 
-# ── Éléments de Dessin et Décors ─────────────────────────────────────────────
+# ── Çizim ve Arka Plan Elemanları ────────────────────────────────────────────
 
 COLOR_ROAD   = (235, 230, 225)
 COLOR_WALL   = (110, 110, 110)   
@@ -461,7 +465,9 @@ def build_background(game: GameData, S: Screen):
 def draw_map(game, S, background, trucks, spawn_timer):
     S.screen.blit(background, (0, 0))
 
+    # Mise à jour de l'affichage des villes (portails ouverts/fermés)
     for (x, y), count in game.cities.items():
+        # Redessiner le fond de la ville avec la couleur de statut
         if count > 0:
             ratio = min(1.0, count / 5.0)
             color = (
@@ -471,7 +477,11 @@ def draw_map(game, S, background, trucks, spawn_timer):
             )
             S.drawRect(x, y, color=color)
             S.drawRect(x, y, color=COLOR_GRID, border=1)
+            
+        # ── DESSINER BRICKHOUSE SUR CHAQUE CASE DE VILLE ──
+        S.drawCitySprite(x, y)
 
+    # Symboles de forêt (Emoji 🌱/🌲)
     for (x, y), wood in game.forests.items():
         if S.pintree_img and S.deadtree_img:
             if wood > 2:
@@ -485,6 +495,7 @@ def draw_map(game, S, background, trucks, spawn_timer):
             else:
                 S.drawText(x, y, "❌", big=False, centered=True)
 
+    # Dessiner les camions
     for truck in trucks:
         truck.draw(S)
 
@@ -495,11 +506,11 @@ def draw_map(game, S, background, trucks, spawn_timer):
     remaining = sum(game.forests.values())
     
     if len(trucks) < MAX_TRUCKS:
-        timer_text = f" | Prochain véhicule : {max(0.0, spawn_timer):.1f}s"
+        timer_text = f" | Yeni Araç: {max(0.0, spawn_timer):.1f}s"
     else:
-        timer_text = " | Dépôt Plein (Max 5)"
+        timer_text = " | Garaj Dolu (Maks 5)"
 
-    txt = f"Livraisons : {total}  |  Restant : {remaining}  |  Camions : {len(trucks)}/{MAX_TRUCKS}{timer_text}"
+    txt = f"Livraisons : {total}  |  Restant : {remaining}  |  Kamyon: {len(trucks)}/{MAX_TRUCKS}{timer_text}"
     surf = S.font.render(txt, True, (240, 240, 240))
     S.screen.blit(surf, (15, bar_y + (ZOOM // 2 - surf.get_height() // 2)))
 
