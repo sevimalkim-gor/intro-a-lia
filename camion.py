@@ -1,11 +1,12 @@
 import sys
 import math
 import random
+import os
 import numpy as np
 import pygame
 from numba import njit
 
-# ── Sabitler ────────────────────────────────────────────────────────────────
+# ── Constantes ──────────────────────────────────────────────────────────────
 
 WALKABLE_INIT   = 100
 BLOCKED_INIT    = 999
@@ -13,13 +14,16 @@ TRUCK_SPEED     = 4.0
 LOAD_TIME       = 1.0        
 UNLOAD_TIME     = 0.8        
 WOOD_PER_FOREST = 5          
-MAX_TRUCKS      = 5          # En fazla 5 kamyon olabilecek
-SPAWN_INTERVAL  = 5.0        # 5 saniyede bir yeni kamyon
+MAX_TRUCKS      = 5          # Maximum 5 camions simultanés
+SPAWN_INTERVAL  = 5.0        # Un nouveau camion toutes les 5 secondes
 DEFAULT_ZOOM    = 45         
 MIN_ZOOM        = 20
 
+# Nom du dossier contenant les images
+ASSETS_DIR      = "assets"
 
-# ── Numba Mesafe Haritası ───────────────────────────────────────────────────
+
+# ── Carte de Distance avec Numba (Algorithme Wavefront) ──────────────────────
 
 @njit(cache=True)
 def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
@@ -56,7 +60,7 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     return iterations
 
 
-# ── BÜYÜTÜLMÜŞ DEPO HARİTASI (20x12) ────────────────────────────────────────
+# ── Structure de la Carte ───────────────────────────────────────────────────
 
 MAP_TEXT = """
 ####################
@@ -69,7 +73,7 @@ MAP_TEXT = """
 # # ########## ### #
 # # #            # #
 #   # ########## # #
-#   ###       #VVVVV#
+#######       #VVVVV#
 ####################
 """
 
@@ -78,18 +82,21 @@ class GameData:
         self.map, self.mapW, self.mapH = self._parse(map_text)
         self.base_dist = self._build_base_dist()
 
+        # Initialisation des forêts
         self.forests = {}
         for x in range(self.mapW):
             for y in range(self.mapH):
                 if self.map[x, y] == 'F':
                     self.forests[(x, y)] = WOOD_PER_FOREST
 
+        # Initialisation des villes
         self.cities = {}
         for x in range(self.mapW):
             for y in range(self.mapH):
                 if self.map[x, y] == 'V':
                     self.cities[(x, y)] = 0
 
+        # Initialisation des dépôts (zone de spawn)
         self.depots = []
         for x in range(self.mapW):
             for y in range(self.mapH):
@@ -152,7 +159,7 @@ class GameData:
         return self.forests.get(pos, 0) <= 0
 
 
-# ── Ekran Yönetimi ───────────────────────────────────────────────────────────
+# ── Gestion de l'Écran et des Graphismes ─────────────────────────────────────
 
 ZOOM = DEFAULT_ZOOM
 
@@ -169,10 +176,41 @@ class Screen:
         self.W = nx * ZOOM
         self.H = (ny + 1) * ZOOM 
         self.screen = pygame.display.set_mode((self.W, self.H))
-        pygame.display.set_caption("Transport Tycoon - Zaman Ayarlı Lojistik")
+        pygame.display.set_caption("Transport Tycoon - Camions Proportionnels")
         self.clock = pygame.time.Clock()
         self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.45)), bold=True)
         self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.35)))
+
+        # Chargement et redimensionnement des images de camions
+        self.truck_images = []
+        image_names = ["car-truck2.png", "car-truck3.png", "car-truck4.png", "car-truck5.png"]
+        
+        for name in image_names:
+            path = os.path.join(ASSETS_DIR, name)
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                
+                # ── CONSERVATION DU RATIO D'ASPECT ──
+                orig_w, orig_h = img.get_size()
+                
+                # Largeur cible fixe (55% de la cellule pour rester fin et élégant)
+                target_w = int(ZOOM * 0.55) 
+                # Calcul de la hauteur proportionnelle
+                target_h = int(target_w * (orig_h / orig_w))
+                
+                # Sécurité anti-dépassement vertical
+                if target_h > int(ZOOM * 0.85):
+                    target_h = int(ZOOM * 0.85)
+                    target_w = int(target_h * (orig_w / orig_h))
+
+                img = pygame.transform.scale(img, (target_w, target_h))
+                self.truck_images.append(img)
+            except Exception as e:
+                print(f"Erreur : Impossible de charger {path} ! Détails : {e}")
+                # Surface de secours en cas d'image manquante
+                fallback = pygame.Surface((int(ZOOM * 0.5), int(ZOOM * 0.8)), pygame.SRCALPHA)
+                pygame.draw.rect(fallback, (200, 50, 50), (0, 0, int(ZOOM * 0.5), int(ZOOM * 0.8)), border_radius=3)
+                self.truck_images.append(fallback)
 
     def grid_to_screen(self, x, y):
         return int(x * ZOOM), int(y * ZOOM)
@@ -192,48 +230,33 @@ class Screen:
         else:
             self.screen.blit(surf, (sx, sy))
 
-    def drawTruck(self, x, y, dx, dy, color, loaded):
+    def drawTruckSprite(self, x, y, dx, dy, img_index, loaded):
         cx, cy = int(x * ZOOM), int(y * ZOOM)
-        body_w = int(ZOOM * 0.65)
-        body_h = int(ZOOM * 0.40)
+        base_img = self.truck_images[img_index % len(self.truck_images)]
+
+        # Calcul de la rotation (Orientation de base du sprite : VERS LE HAUT)
+        angle = 0
+        if dy < 0:    angle = 0    # Haut
+        elif dy > 0:  angle = 180  # Bas
+        elif dx > 0:  angle = 270  # Droite (Sens horaire)
+        elif dx < 0:  angle = 90   # Gauche (Sens anti-horaire)
+
+        # Application de la rotation
+        rotated_img = pygame.transform.rotate(base_img, angle)
         
-        if abs(dy) > abs(dx):
-            body_w, body_h = body_h, body_w
+        # Centrage parfait sur le milieu de la case de route
+        rect = rotated_img.get_rect(center=(cx, cy))
+        self.screen.blit(rotated_img, rect.topleft)
 
-        body_rect = pygame.Rect(cx - body_w//2, cy - body_h//2, body_w, body_h)
-        pygame.draw.rect(self.screen, color, body_rect, border_radius=3)
-        pygame.draw.rect(self.screen, (20, 20, 20), body_rect, 1, border_radius=3)
-
-        cab_size = int(ZOOM * 0.25)
-        if abs(dx) >= abs(dy): 
-            cab_x = cx + (body_w//2 - cab_size) if dx > 0 else cx - body_w//2
-            cab_y = cy - cab_size//2
-        else: 
-            cab_x = cx - cab_size//2
-            cab_y = cy + (body_h//2 - cab_size) if dy > 0 else cy - body_h//2
-
-        pygame.draw.rect(self.screen, (30, 30, 45), (cab_x, cab_y, cab_size, cab_size), border_radius=1)
-
+        # Indicateur visuel discret si le camion est chargé
         if loaded:
-            cargo_color = (139, 90, 43)
-            if abs(dx) >= abs(dy):
-                pygame.draw.rect(self.screen, cargo_color, (cx - 3, cy - body_h//3, 6, int(body_h * 0.6)))
-            else:
-                pygame.draw.rect(self.screen, cargo_color, (cx - body_w//3, cy - 3, int(body_w * 0.6), 6))
+            pygame.draw.circle(self.screen, (139, 90, 43), (cx, cy), 3)
 
     def show(self):
         pygame.display.flip()
 
 
-# ── Kamyon Sınıfı ───────────────────────────────────────────────────────────
-
-TRUCK_COLORS = [
-    (230, 40, 40),   # Kırmızı
-    (40, 110, 230),  # Mavi
-    (245, 175, 20),  # Sarı
-    (35, 185, 80),   # Yeşil
-    (170, 60, 210)   # Mor
-]
+# ── Classe Camion ───────────────────────────────────────────────────────────
 
 class Truck:
     _id_counter = 0
@@ -241,14 +264,14 @@ class Truck:
     def __init__(self, game: GameData, depot_pos):
         Truck._id_counter += 1
         self.tid  = Truck._id_counter
-        self.color = TRUCK_COLORS[(self.tid - 1) % len(TRUCK_COLORS)]
+        self.img_index = (self.tid - 1) % 4
 
         self.cx, self.cy = depot_pos     
         self.nx, self.ny = depot_pos     
         self.x = self.cx + 0.5
         self.y = self.cy + 0.5
         
-        self.dir  = (1.0, 0.0)
+        self.dir  = (0.0, -1.0) # Initialisation orientée vers le haut
         self.speed = TRUCK_SPEED + random.uniform(-0.2, 0.2)
 
         self.loaded   = False
@@ -381,10 +404,10 @@ class Truck:
             self.y += self.dir[1] * step
 
     def draw(self, S: Screen):
-        S.drawTruck(self.x, self.y, self.dir[0], self.dir[1], self.color, self.loaded)
+        S.drawTruckSprite(self.x, self.y, self.dir[0], self.dir[1], self.img_index, self.loaded)
 
 
-# ── Çizim Elemanları ─────────────────────────────────────────────────────────
+# ── Éléments de Dessin et Décors ─────────────────────────────────────────────
 
 COLOR_ROAD   = (235, 230, 225)
 COLOR_WALL   = (110, 110, 110)   
@@ -392,7 +415,7 @@ COLOR_FOREST = (34, 139, 34)
 COLOR_FOREST_EMPTY = (150, 125, 100)
 COLOR_CITY_BASE = (205, 195, 175)
 COLOR_CITY_DONE = (100, 210, 130)
-COLOR_DEPOT  = (140, 140, 185)   # Belirgin mavi-gri tonlu büyük depo alanı
+COLOR_DEPOT  = (140, 140, 185)   
 COLOR_GRID   = (220, 215, 205)
 
 def build_background(game: GameData, S: Screen):
@@ -449,26 +472,25 @@ def draw_map(game, S, background, trucks, spawn_timer):
     for truck in trucks:
         truck.draw(S)
 
-    # Alt Bilgi Çubuğu
+    # Barre de statut inférieure
     bar_y = S.H - ZOOM
     pygame.draw.rect(S.screen, (25, 25, 25), (0, bar_y, S.W, ZOOM))
     total = game.total_wood_delivered
     remaining = sum(game.forests.values())
     
-    # Yeni kamyon sayacı bilgisi
     if len(trucks) < MAX_TRUCKS:
-        timer_text = f" | Nouveau camion: {max(0.0, spawn_timer):.1f}s"
+        timer_text = f" | Prochain véhicule : {max(0.0, spawn_timer):.1f}s"
     else:
-        timer_text = " | Garaj Dolu (Maks 5)"
+        timer_text = " | Dépôt Plein (Max 5)"
 
-    txt = f"Livraison: {total}  |  Le reste: {remaining}  |  Camion: {len(trucks)}/{MAX_TRUCKS}{timer_text}"
+    txt = f"Livraisons : {total}  |  Restant : {remaining}  |  Camions : {len(trucks)}/{MAX_TRUCKS}{timer_text}"
     surf = S.font.render(txt, True, (240, 240, 240))
     S.screen.blit(surf, (15, bar_y + (ZOOM // 2 - surf.get_height() // 2)))
 
     S.show()
 
 
-# ── Ana Döngü ─────────────────────────────────────────────────────────────────
+# ── Boucle Principale ────────────────────────────────────────────────────────
 
 def main():
     pygame.init()
@@ -476,11 +498,7 @@ def main():
     S    = Screen(game.mapW, game.mapH)
 
     depots = game.depots if game.depots else [(game.mapW//2, game.mapH//2)]
-    
-    # Oyun başlangıcında sadece 1 kamyon var
     trucks = [Truck(game, depots[0])]
-    
-    # Spawn (Üretim) zamanlayıcısı
     spawn_timer = SPAWN_INTERVAL
 
     background = build_background(game, S)
@@ -508,18 +526,16 @@ def main():
                 if not PAUSE:
                     dt = 1.0 / LOGIC_FPS
                     
-                    # Kamyonların Güncellenmesi
                     for truck in trucks:
                         truck.update(game, dt)
                     
-                    # Dinamik Kamyon Üretim Mantığı
+                    # Logique d'apparition des camions (Spawn)
                     if len(trucks) < MAX_TRUCKS:
                         spawn_timer -= dt
                         if spawn_timer <= 0:
-                            # Deponun rastgele bir karesinde yeni kamyon oluştur
                             dp = random.choice(depots)
                             trucks.append(Truck(game, dp))
-                            spawn_timer = SPAWN_INTERVAL # Sayacı sıfırla
+                            spawn_timer = SPAWN_INTERVAL
                     
                     background = build_background(game, S)
 
