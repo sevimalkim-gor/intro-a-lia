@@ -60,7 +60,8 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     return iterations
 
 
-# ── ANCIENNE HARİTA YAPISI (20x12) ───────────────────────────────────────────
+# ── NOUVELLE HARİTA YAPISI (20x12) ───────────────────────────────────────────
+# Ortadaki ve kenardaki boşluklara S ve M adımları eklendi
 
 MAP_TEXT = """
 ####################
@@ -68,12 +69,12 @@ MAP_TEXT = """
 #FFFFFF# ##### ### #
 ###### # #   # # # #
 #      # # DD# # # #
-# ###### # DD# # # #
-# #        ### #   #
-# # ########## ### #
-# # #            # #
-#   # ########   # #
-#######       VVVVV#
+# SSS      DD# # M #
+# SSS  #   ### # M #
+# #  ######### ### #
+# #              # #
+#     ########## # #
+#######       #VVVV#
 ####################
 """
 
@@ -89,6 +90,20 @@ class GameData:
                 if self.map[x, y] == 'F':
                     self.forests[(x, y)] = WOOD_PER_FOREST
 
+        # Initialisation des scieries (S)
+        self.scieries = []
+        for x in range(self.mapW):
+            for y in range(self.mapH):
+                if self.map[x, y] == 'S':
+                    self.scieries.append((x, y))
+
+        # Initialisation des fabriques de meubles (M)
+        self.factories = []
+        for x in range(self.mapW):
+            for y in range(self.mapH):
+                if self.map[x, y] == 'M':
+                    self.factories.append((x, y))
+
         # Initialisation des villes
         self.cities = {}
         for x in range(self.mapW):
@@ -103,7 +118,7 @@ class GameData:
                 if self.map[x, y] == 'D':
                     self.depots.append((x, y))
 
-        self.total_wood_delivered = 0
+        self.total_furniture_delivered = 0
 
     def _parse(self, text):
         rows = [line for line in text.strip().splitlines() if line.strip()]
@@ -113,7 +128,7 @@ class GameData:
         for row in rows:
             cells = []
             for c in row.ljust(maxlen):
-                if c in ('#', 'F', 'V', 'D'):
+                if c in ('#', 'F', 'V', 'D', 'S', 'M'):
                     cells.append(c)
                 else:
                     cells.append(' ')
@@ -127,7 +142,7 @@ class GameData:
         base = np.full((self.mapW, self.mapH), BLOCKED_INIT, dtype=np.int32)
         for x in range(self.mapW):
             for y in range(self.mapH):
-                if self.map[x, y] in (' ', 'D', 'F', 'V'):
+                if self.map[x, y] in (' ', 'D', 'F', 'V', 'S', 'M'):
                     base[x, y] = WALKABLE_INIT
         return base
 
@@ -141,6 +156,12 @@ class GameData:
     def available_forests(self):
         return [(pos, wood) for pos, wood in self.forests.items() if wood > 0]
 
+    def available_scieries(self):
+        return self.scieries
+
+    def available_factories(self):
+        return self.factories
+
     def available_cities(self):
         return list(self.cities.keys())
 
@@ -153,7 +174,7 @@ class GameData:
     def deliver(self, pos):
         if pos in self.cities:
             self.cities[pos] += 1
-            self.total_wood_delivered += 1
+            self.total_furniture_delivered += 1
 
     def forest_exhausted(self, pos):
         return self.forests.get(pos, 0) <= 0
@@ -176,7 +197,7 @@ class Screen:
         self.W = nx * ZOOM
         self.H = (ny + 1) * ZOOM 
         self.screen = pygame.display.set_mode((self.W, self.H))
-        pygame.display.set_caption("Transport Tycoon - Resimli Kamyonlar")
+        pygame.display.set_caption("Transport Tycoon - Lojistik Zinciri")
         self.clock = pygame.time.Clock()
         self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.45)), bold=True)
         self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.35)))
@@ -190,12 +211,10 @@ class Screen:
             try:
                 img = pygame.image.load(path).convert_alpha()
                 
-                # Conservation du ratio d'aspect
                 orig_w, orig_h = img.get_size()
                 target_w = int(ZOOM * 0.55) 
                 target_h = int(target_w * (orig_h / orig_w))
                 
-                # Sécurité anti-dépassement vertical
                 if target_h > int(ZOOM * 0.85):
                     target_h = int(ZOOM * 0.85)
                     target_w = int(target_h * (orig_w / orig_h))
@@ -203,7 +222,7 @@ class Screen:
                 img = pygame.transform.scale(img, (target_w, target_h))
                 self.truck_images.append(img)
             except Exception as e:
-                print(f"Erreur : Impossible de charger {path} ! Détails : {e}")
+                print(f"Erreur : Impossible de charger {path} ! Başarısız. Rapor: {e}")
                 fallback = pygame.Surface((int(ZOOM * 0.5), int(ZOOM * 0.8)), pygame.SRCALPHA)
                 pygame.draw.rect(fallback, (200, 50, 50), (0, 0, int(ZOOM * 0.5), int(ZOOM * 0.8)), border_radius=3)
                 self.truck_images.append(fallback)
@@ -213,10 +232,24 @@ class Screen:
         city_asset_path = os.path.join(ASSETS_DIR, "BrickHouse.png")
         try:
             self.city_asset = pygame.image.load(city_asset_path).convert_alpha()
-            # Redimensionner pour tenir dans une case de ville (par exemple 80% du ZOOM)
             self.city_asset = pygame.transform.scale(self.city_asset, (int(ZOOM * 0.8), int(ZOOM * 0.8)))
         except Exception as e:
-            print(f"Erreur : Impossible de charger BrickHouse.png ! Ville vide. Détails : {e}")
+            print(f"Erreur : Impossible de charger BrickHouse.png! {e}")
+
+        # ── CHARGEMENT FACTORY.SVG & ISOMETRIC_OFFICE_5.SVG ──
+        self.factory_asset = None
+        self.office_asset = None
+        try:
+            self.factory_asset = pygame.image.load(os.path.join(ASSETS_DIR, "factory.png")).convert_alpha()
+            self.factory_asset = pygame.transform.scale(self.factory_asset, (int(ZOOM * 0.85), int(ZOOM * 0.85)))
+        except Exception as e:
+            print(f"factory.png yüklenemedi: {e}")
+            
+        try:
+            self.office_asset = pygame.image.load(os.path.join(ASSETS_DIR, "isometric_office_5.png")).convert_alpha()
+            self.office_asset = pygame.transform.scale(self.office_asset, (int(ZOOM * 0.85), int(ZOOM * 0.85)))
+        except Exception as e:
+            print(f"isometric_office_5.png yüklenemedi: {e}")
 
         # ── CHARGEMENT DES IMAGES D'ARBRES ──
         self.pintree_img = None
@@ -227,7 +260,7 @@ class Screen:
             self.pintree_img = pygame.transform.scale(pintree, (ZOOM, ZOOM))
             self.deadtree_img = pygame.transform.scale(deadtree, (ZOOM, ZOOM))
         except Exception as e:
-            print(f"Info : impossible de charger les images d'arbres ({e}). Utilisation du rendu de secours.")
+            print(f"Info : İmage yüklenemedi ({e}).")
 
     def grid_to_screen(self, x, y):
         return int(x * ZOOM), int(y * ZOOM)
@@ -252,36 +285,45 @@ class Screen:
         rect = image.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
         self.screen.blit(image, rect.topleft)
 
-    def drawTruckSprite(self, x, y, dx, dy, img_index, loaded):
+    def drawTruckSprite(self, x, y, dx, dy, img_index, cargo_type):
         cx, cy = int(x * ZOOM), int(y * ZOOM)
         base_img = self.truck_images[img_index % len(self.truck_images)]
 
-        # Calcul de la rotation (Orientation de base du sprite : VERS LE HAUT)
         angle = 0
-        if dy < 0:    angle = 0    # Haut
-        elif dy > 0:  angle = 180  # Bas
-        elif dx > 0:  angle = 270  # Droite (Sens horaire)
-        elif dx < 0:  angle = 90   # Gauche (Sens anti-horaire)
+        if dy < 0:    angle = 0    
+        elif dy > 0:  angle = 180  
+        elif dx > 0:  angle = 270  
+        elif dx < 0:  angle = 90   
 
-        # Application de la rotation
         rotated_img = pygame.transform.rotate(base_img, angle)
-        
-        # 'center=(cx, cy)' pour centrer parfaitement sur le milieu de la case
         rect = rotated_img.get_rect(center=(cx, cy))
-        
         self.screen.blit(rotated_img, rect.topleft)
 
-        # Indicateur visuel discret si le camion est chargé
-        if loaded:
-            pygame.draw.circle(self.screen, (139, 90, 43), (cx, cy), 3)
+        # Kamyonun üstündeki yüke göre renkli nokta çizimi
+        if cargo_type == "wood":
+            pygame.draw.circle(self.screen, (139, 90, 43), (cx, cy), 4) # Kahverengi odun
+        elif cargo_type == "planks":
+            pygame.draw.circle(self.screen, (222, 184, 135), (cx, cy), 4) # Sarımsı kereste
+        elif cargo_type == "furniture":
+            pygame.draw.circle(self.screen, (255, 140, 0), (cx, cy), 4) # Turuncu mobilya
 
-    # ── FONCTION POUR DESSINER L'ASSET DE VILLE ──
     def drawCitySprite(self, x, y):
         if self.city_asset:
             sx, sy = self.grid_to_screen(x, y)
-            # Centrer l'asset de ville dans la case de ville
             rect = self.city_asset.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
             self.screen.blit(self.city_asset, rect.topleft)
+
+    def drawScierieSprite(self, x, y):
+        if self.factory_asset:
+            sx, sy = self.grid_to_screen(x, y)
+            rect = self.factory_asset.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
+            self.screen.blit(self.factory_asset, rect.topleft)
+
+    def drawFactorySprite(self, x, y):
+        if self.office_asset:
+            sx, sy = self.grid_to_screen(x, y)
+            rect = self.office_asset.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
+            self.screen.blit(self.office_asset, rect.topleft)
 
     def show(self):
         pygame.display.flip()
@@ -305,9 +347,9 @@ class Truck:
         self.dir  = (0.0, -1.0) 
         self.speed = TRUCK_SPEED + random.uniform(-0.2, 0.2)
 
-        self.loaded   = False
-        self.state    = "seeking_forest" 
-        self.timer    = 0.0
+        self.cargo = None             # None, "wood", "planks", "furniture"
+        self.state = "seeking_forest" 
+        self.timer = 0.0
         self.target_pos = None
 
         self.dist = np.empty_like(game.base_dist)
@@ -330,6 +372,26 @@ class Truck:
 
         self.target_pos = best
         self.state = "seeking_forest"
+        self._refresh_dist(game)
+
+    def _pick_scierie_target(self, game):
+        scieries = game.available_scieries()
+        if not scieries:
+            self.state = "idle"
+            self.target_pos = None
+            return
+        self.target_pos = min(scieries, key=lambda p: abs(p[0]-self.cx) + abs(p[1]-self.cy))
+        self.state = "seeking_scierie"
+        self._refresh_dist(game)
+
+    def _pick_factory_target(self, game):
+        factories = game.available_factories()
+        if not factories:
+            self.state = "idle"
+            self.target_pos = None
+            return
+        self.target_pos = min(factories, key=lambda p: abs(p[0]-self.cx) + abs(p[1]-self.cy))
+        self.state = "seeking_factory"
         self._refresh_dist(game)
 
     def _pick_city_target(self, game):
@@ -386,17 +448,31 @@ class Truck:
         if self.state == "loading":
             self.timer -= dt
             if self.timer <= 0:
-                self.loaded = True
-                self._pick_city_target(game)
-            return
+                if self.cargo is None:
+                    self.cargo = "wood"
+                    self._pick_scierie_target(game)
+                elif self.cargo == "wood":
+                    self.cargo = "planks"
+                    self._pick_factory_target(game)
+                elif self.cargo == "planks":
+                    self.cargo = "furniture"
+                    self._pick_city_target(game)
+                return
 
         if self.state == "unloading":
             self.timer -= dt
             if self.timer <= 0:
-                game.deliver(self.target_pos)
-                self.loaded = False
-                self._pick_forest_target(game)
-            return
+                if self.cargo == "wood":
+                    self.state = "loading"
+                    self.timer = LOAD_TIME
+                elif self.cargo == "planks":
+                    self.state = "loading"
+                    self.timer = LOAD_TIME
+                elif self.cargo == "furniture":
+                    game.deliver(self.target_pos)
+                    self.cargo = None
+                    self._pick_forest_target(game)
+                return
 
         if self.cx == self.nx and self.cy == self.ny:
             if self.target_pos and (abs(self.target_pos[0] - self.cx) + abs(self.target_pos[1] - self.cy) <= 1):
@@ -408,6 +484,12 @@ class Truck:
                         self.timer = LOAD_TIME
                     else:
                         self._pick_forest_target(game)
+                elif self.state == "seeking_scierie":
+                    self.state = "unloading"
+                    self.timer = UNLOAD_TIME
+                elif self.state == "seeking_factory":
+                    self.state = "unloading"
+                    self.timer = UNLOAD_TIME
                 elif self.state == "seeking_city":
                     self.state = "unloading"
                     self.timer = UNLOAD_TIME
@@ -435,14 +517,13 @@ class Truck:
             self.y += self.dir[1] * step
 
     def draw(self, S: Screen):
-        S.drawTruckSprite(self.x, self.y, self.dir[0], self.dir[1], self.img_index, self.loaded)
+        S.drawTruckSprite(self.x, self.y, self.dir[0], self.dir[1], self.img_index, self.cargo)
 
 
 # ── Çizim ve Arka Plan Elemanları ────────────────────────────────────────────
 
 COLOR_ROAD   = (235, 230, 225)
 COLOR_WALL   = (110, 110, 110)   
-COLOR_FOREST = (34, 139, 34)
 COLOR_FOREST_EMPTY = (150, 125, 100)
 COLOR_CITY_BASE = (205, 195, 175)
 COLOR_CITY_DONE = (100, 210, 130)
@@ -458,7 +539,7 @@ def build_background(game: GameData, S: Screen):
             c = game.map[x, y]
             if c == '#':
                 color = COLOR_WALL
-            elif c == 'F':
+            elif c in ('F', 'S', 'M'):
                 color = COLOR_ROAD
             elif c == 'V':
                 color = COLOR_CITY_BASE
@@ -476,9 +557,16 @@ def build_background(game: GameData, S: Screen):
 def draw_map(game, S, background, trucks, spawn_timer):
     S.screen.blit(background, (0, 0))
 
-    # Mise à jour de l'affichage des villes (portails ouverts/fermés)
+    # Hızarhaneleri Çiz (S) -> factory.svg
+    for (x, y) in game.scieries:
+        S.drawScierieSprite(x, y)
+
+    # Mobilya Fabrikalarını Çiz (M) -> isometric_office_5.svg
+    for (x, y) in game.factories:
+        S.drawFactorySprite(x, y)
+
+    # Affichage des villes
     for (x, y), count in game.cities.items():
-        # Redessiner le fond de la ville avec la couleur de statut
         if count > 0:
             ratio = min(1.0, count / 5.0)
             color = (
@@ -489,7 +577,6 @@ def draw_map(game, S, background, trucks, spawn_timer):
             S.drawRect(x, y, color=color)
             S.drawRect(x, y, color=COLOR_GRID, border=1)
             
-        # ── DESSINER BRICKHOUSE SUR CHAQUE CASE DE VILLE ──
         S.drawCitySprite(x, y)
 
     # Symboles de forêt (Emoji 🌱/🌲)
@@ -513,7 +600,7 @@ def draw_map(game, S, background, trucks, spawn_timer):
     # Barre de statut inférieure
     bar_y = S.H - ZOOM
     pygame.draw.rect(S.screen, (25, 25, 25), (0, bar_y, S.W, ZOOM))
-    total = game.total_wood_delivered
+    total = game.total_furniture_delivered
     remaining = sum(game.forests.values())
     
     if len(trucks) < MAX_TRUCKS:
@@ -521,7 +608,7 @@ def draw_map(game, S, background, trucks, spawn_timer):
     else:
         timer_text = " | Garaj Dolu (Maks 5)"
 
-    txt = f"Livraisons : {total}  |  Restant : {remaining}  |  Kamyon: {len(trucks)}/{MAX_TRUCKS}{timer_text}"
+    txt = f"Mobilya Teslimatı: {total}  |  Kalan Odun: {remaining}  |  Kamyon: {len(trucks)}/{MAX_TRUCKS}{timer_text}"
     surf = S.font.render(txt, True, (240, 240, 240))
     S.screen.blit(surf, (15, bar_y + (ZOOM // 2 - surf.get_height() // 2)))
 
@@ -567,7 +654,6 @@ def main():
                     for truck in trucks:
                         truck.update(game, dt)
                     
-                    # Logique d'apparition des camions (Spawn)
                     if len(trucks) < MAX_TRUCKS:
                         spawn_timer -= dt
                         if spawn_timer <= 0:
