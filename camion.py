@@ -212,6 +212,17 @@ class Screen:
                 pygame.draw.rect(fallback, (200, 50, 50), (0, 0, int(ZOOM * 0.5), int(ZOOM * 0.8)), border_radius=3)
                 self.truck_images.append(fallback)
 
+        # Charger les images d'arbres si disponibles
+        try:
+            pintree = pygame.image.load(os.path.join(ASSETS_DIR, 'pintree.png')).convert_alpha()
+            deadtree = pygame.image.load(os.path.join(ASSETS_DIR, 'deadtree.png')).convert_alpha()
+            self.pintree_img = pygame.transform.scale(pintree, (ZOOM, ZOOM))
+            self.deadtree_img = pygame.transform.scale(deadtree, (ZOOM, ZOOM))
+        except Exception as e:
+            self.pintree_img = None
+            self.deadtree_img = None
+            print(f"Info: tree assets not loaded ({e}). Falling back to text markers.")
+
     def grid_to_screen(self, x, y):
         return int(x * ZOOM), int(y * ZOOM)
 
@@ -229,6 +240,11 @@ class Screen:
             self.screen.blit(surf, (sx + ox, sy + oy))
         else:
             self.screen.blit(surf, (sx, sy))
+
+    def drawImage(self, x, y, image):
+        sx, sy = self.grid_to_screen(x, y)
+        rect = image.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
+        self.screen.blit(image, rect.topleft)
 
     def drawTruckSprite(self, x, y, dx, dy, img_index, loaded):
         cx, cy = int(x * ZOOM), int(y * ZOOM)
@@ -428,16 +444,7 @@ def build_background(game: GameData, S: Screen):
             if c == '#':
                 color = COLOR_WALL
             elif c == 'F':
-                wood = game.forests.get((x,y), WOOD_PER_FOREST)
-                if wood > 0:
-                    ratio = wood / WOOD_PER_FOREST
-                    color = (
-                        int(COLOR_FOREST_EMPTY[0] + ratio*(COLOR_FOREST[0]-COLOR_FOREST_EMPTY[0])),
-                        int(COLOR_FOREST_EMPTY[1] + ratio*(COLOR_FOREST[1]-COLOR_FOREST_EMPTY[1])),
-                        int(COLOR_FOREST_EMPTY[2] + ratio*(COLOR_FOREST[2]-COLOR_FOREST_EMPTY[2]))
-                    )
-                else:
-                    color = COLOR_FOREST_EMPTY
+                color = COLOR_ROAD
             elif c == 'V':
                 color = COLOR_CITY_BASE
             elif c == 'D':
@@ -466,8 +473,17 @@ def draw_map(game, S, background, trucks, spawn_timer):
             S.drawRect(x, y, color=COLOR_GRID, border=1)
 
     for (x, y), wood in game.forests.items():
-        if wood > 0:
-            S.drawText(x, y, "🌲" if wood > 2 else "🌱", big=False, centered=True)
+        if S.pintree_img and S.deadtree_img:
+            if wood > 2:
+                img = S.pintree_img
+            else:
+                img = S.deadtree_img
+            S.drawImage(x, y, img)
+        else:
+            if wood > 0:
+                S.drawText(x, y, "🌲" if wood > 2 else "🌱", big=False, centered=True)
+            else:
+                S.drawText(x, y, "❌", big=False, centered=True)
 
     for truck in trucks:
         truck.draw(S)
