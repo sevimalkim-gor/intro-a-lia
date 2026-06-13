@@ -9,12 +9,13 @@ from numba import njit
 
 WALKABLE_INIT   = 100
 BLOCKED_INIT    = 999
-TRUCK_SPEED     = 4.0        # Küçük haritada daha rahat izlemek için ideal hız
+TRUCK_SPEED     = 4.0        
 LOAD_TIME       = 1.0        
 UNLOAD_TIME     = 0.8        
 WOOD_PER_FOREST = 5          
-NUM_TRUCKS      = 3          # Küçük harita için 3 kamyon çok daha ideal
-DEFAULT_ZOOM    = 45         # Harita küçüldüğü için kareleri büyüterek netleştirdik
+MAX_TRUCKS      = 5          # En fazla 5 kamyon olabilecek
+SPAWN_INTERVAL  = 5.0        # 5 saniyede bir yeni kamyon
+DEFAULT_ZOOM    = 45         
 MIN_ZOOM        = 20
 
 
@@ -55,20 +56,20 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     return iterations
 
 
-# ── SADELEŞTİRİLMİŞ KÜÇÜK LABİRENT HARİTASI (20x12) ─────────────────────────
+# ── BÜYÜTÜLMÜŞ DEPO HARİTASI (20x12) ────────────────────────────────────────
 
 MAP_TEXT = """
 ####################
 #FFFFFF#           #
 #FFFFFF# ##### ### #
 ###### # #   # # # #
-#      # # # # # # #
-# ###### # #D# # # #
+#      # # DD# # # #
+# ###### # DD# # # #
 # #        ### #   #
 # # ########## ### #
 # # #            # #
 #   # ########## # #
-#######       #VVVVV#
+#   ###       #VVVVV#
 ####################
 """
 
@@ -168,7 +169,7 @@ class Screen:
         self.W = nx * ZOOM
         self.H = (ny + 1) * ZOOM 
         self.screen = pygame.display.set_mode((self.W, self.H))
-        pygame.display.set_caption("Transport Tycoon - Mini Labirent")
+        pygame.display.set_caption("Transport Tycoon - Zaman Ayarlı Lojistik")
         self.clock = pygame.time.Clock()
         self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.45)), bold=True)
         self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.35)))
@@ -224,9 +225,15 @@ class Screen:
         pygame.display.flip()
 
 
-# ── Kamyon Motoru (Kareye Kilitli - Kararlı) ─────────────────────────────────
+# ── Kamyon Sınıfı ───────────────────────────────────────────────────────────
 
-TRUCK_COLORS = [(230, 40, 40), (40, 110, 230), (245, 175, 20)]
+TRUCK_COLORS = [
+    (230, 40, 40),   # Kırmızı
+    (40, 110, 230),  # Mavi
+    (245, 175, 20),  # Sarı
+    (35, 185, 80),   # Yeşil
+    (170, 60, 210)   # Mor
+]
 
 class Truck:
     _id_counter = 0
@@ -380,12 +387,12 @@ class Truck:
 # ── Çizim Elemanları ─────────────────────────────────────────────────────────
 
 COLOR_ROAD   = (235, 230, 225)
-COLOR_WALL   = (110, 110, 110)   # Net gri duvarlar
+COLOR_WALL   = (110, 110, 110)   
 COLOR_FOREST = (34, 139, 34)
 COLOR_FOREST_EMPTY = (150, 125, 100)
 COLOR_CITY_BASE = (205, 195, 175)
 COLOR_CITY_DONE = (100, 210, 130)
-COLOR_DEPOT  = (150, 150, 190)
+COLOR_DEPOT  = (140, 140, 185)   # Belirgin mavi-gri tonlu büyük depo alanı
 COLOR_GRID   = (220, 215, 205)
 
 def build_background(game: GameData, S: Screen):
@@ -421,7 +428,7 @@ def build_background(game: GameData, S: Screen):
                 pygame.draw.rect(surf, COLOR_GRID, (sx, sy, ZOOM, ZOOM), 1)
     return surf
 
-def draw_map(game, S, background, trucks):
+def draw_map(game, S, background, trucks, spawn_timer):
     S.screen.blit(background, (0, 0))
 
     for (x, y), count in game.cities.items():
@@ -447,7 +454,14 @@ def draw_map(game, S, background, trucks):
     pygame.draw.rect(S.screen, (25, 25, 25), (0, bar_y, S.W, ZOOM))
     total = game.total_wood_delivered
     remaining = sum(game.forests.values())
-    txt = f"Teslimat: {total}  |  Kalan: {remaining}  |  Kamyon: {len(trucks)}"
+    
+    # Yeni kamyon sayacı bilgisi
+    if len(trucks) < MAX_TRUCKS:
+        timer_text = f" | Nouveau camion: {max(0.0, spawn_timer):.1f}s"
+    else:
+        timer_text = " | Garaj Dolu (Maks 5)"
+
+    txt = f"Livraison: {total}  |  Le reste: {remaining}  |  Camion: {len(trucks)}/{MAX_TRUCKS}{timer_text}"
     surf = S.font.render(txt, True, (240, 240, 240))
     S.screen.blit(surf, (15, bar_y + (ZOOM // 2 - surf.get_height() // 2)))
 
@@ -461,11 +475,13 @@ def main():
     game = GameData(MAP_TEXT)
     S    = Screen(game.mapW, game.mapH)
 
-    trucks = []
     depots = game.depots if game.depots else [(game.mapW//2, game.mapH//2)]
-    for i in range(NUM_TRUCKS):
-        dp = depots[i % len(depots)]
-        trucks.append(Truck(game, dp))
+    
+    # Oyun başlangıcında sadece 1 kamyon var
+    trucks = [Truck(game, depots[0])]
+    
+    # Spawn (Üretim) zamanlayıcısı
+    spawn_timer = SPAWN_INTERVAL
 
     background = build_background(game, S)
 
@@ -485,19 +501,29 @@ def main():
                 elif event.key == pygame.K_r:
                     game = GameData(MAP_TEXT)
                     Truck._id_counter = 0
-                    trucks = []
-                    for i in range(NUM_TRUCKS):
-                        dp = depots[i % len(depots)]
-                        trucks.append(Truck(game, dp))
+                    trucks = [Truck(game, depots[0])]
+                    spawn_timer = SPAWN_INTERVAL
                     background = build_background(game, S)
             elif event.type == LOGIC_TIMER:
                 if not PAUSE:
                     dt = 1.0 / LOGIC_FPS
+                    
+                    # Kamyonların Güncellenmesi
                     for truck in trucks:
                         truck.update(game, dt)
+                    
+                    # Dinamik Kamyon Üretim Mantığı
+                    if len(trucks) < MAX_TRUCKS:
+                        spawn_timer -= dt
+                        if spawn_timer <= 0:
+                            # Deponun rastgele bir karesinde yeni kamyon oluştur
+                            dp = random.choice(depots)
+                            trucks.append(Truck(game, dp))
+                            spawn_timer = SPAWN_INTERVAL # Sayacı sıfırla
+                    
                     background = build_background(game, S)
 
-        draw_map(game, S, background, trucks)
+        draw_map(game, S, background, trucks, spawn_timer)
         S.clock.tick(60)
 
     pygame.quit()
