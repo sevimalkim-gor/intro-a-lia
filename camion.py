@@ -218,6 +218,17 @@ class Screen:
         except Exception as e:
             print(f"Erreur : Impossible de charger BrickHouse.png ! Ville vide. Détails : {e}")
 
+        # ── CHARGEMENT DES IMAGES D'ARBRES ──
+        self.pintree_img = None
+        self.deadtree_img = None
+        try:
+            pintree = pygame.image.load(os.path.join(ASSETS_DIR, 'pintree.png')).convert_alpha()
+            deadtree = pygame.image.load(os.path.join(ASSETS_DIR, 'deadtree.png')).convert_alpha()
+            self.pintree_img = pygame.transform.scale(pintree, (ZOOM, ZOOM))
+            self.deadtree_img = pygame.transform.scale(deadtree, (ZOOM, ZOOM))
+        except Exception as e:
+            print(f"Info : impossible de charger les images d'arbres ({e}). Utilisation du rendu de secours.")
+
     def grid_to_screen(self, x, y):
         return int(x * ZOOM), int(y * ZOOM)
 
