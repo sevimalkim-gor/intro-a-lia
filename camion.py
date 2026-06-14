@@ -67,32 +67,19 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
 # ── Structure de la Carte (20x12) ───────────────────────────────────────────
 # Des emplacements pour les scieries (S) et les fabriques (M) ont été ajoutés.
 
-# MAP_TEXT = """
-# ####################
-# #FFFFFF#           #
-# #FFFFFF# ##### ### #
-# ###### # #   # # # #
-# #      # # DD# # # #
-# # SSS      DD# MMM #
-# # SSS  #   ### MMM #
-# # #  ######### ### #
-# # #              # #
-# #     ########## # #
-# #######       #VVVV#
-# ####################
-# """
+
 MAP_TEXT = """
 ####################
-#FFFFFF#           #
-#FFFFFF# ##### ### #
-###### # #   # # # #
-#      # # DD# # # #
+#FFFFFF#       #WWW#
+#FFFFFF# ##### #####
+###    # #         #
+#      # # DD# #####
 # SSS      DD# MMM #
-# SSS  #   ### MMM #
-# #  ######### ### #
-# #              # #
+# SSS      ### MMM #
+#     ####     ### #
+# ##  #WW#       # #
 #     ########## # #
-#######       #VVVV#
+#####         #VVVV#
 ####################
 """
 class GameData:
@@ -106,6 +93,17 @@ class GameData:
             for y in range(self.mapH):
                 if self.map[x, y] == 'F':
                     self.forests[(x, y)] = WOOD_PER_FOREST
+        # ── CHARGEMENT DE BRICKTILES.PNG ──
+        self.tile_img = None
+        try:
+            path = os.path.join(ASSETS_DIR, "BrickTiles.png")
+            img = pygame.image.load(path).convert_alpha()
+            
+            # Eğer resim kare kare ayrılmış küçük bir tile ise, 
+            # doğrudan her karenin içine tam oturması için ZOOM boyutuna pürüzsüz ölçekliyoruz.
+            self.tile_img = pygame.transform.smoothscale(img, (ZOOM, ZOOM))
+        except Exception as e:
+            print(f"Erreur : Impossible de charger BrickTiles.png ! {e}")
 
         # Initialisation des scieries (S)
         self.scieries = []
@@ -136,6 +134,8 @@ class GameData:
                     self.depots.append((x, y))
 
         self.total_furniture_delivered = 0
+        self.money = 0
+        self.floating_texts = []
 
     def _parse(self, text):
         rows = [line for line in text.strip().splitlines() if line.strip()]
@@ -145,7 +145,7 @@ class GameData:
         for row in rows:
             cells = []
             for c in row.ljust(maxlen):
-                if c in ('#', 'F', 'V', 'D', 'S', 'M'):
+                if c in ('#', 'F', 'V', 'D', 'S', 'M', 'W'):
                     cells.append(c)
                 else:
                     cells.append(' ')
@@ -156,10 +156,14 @@ class GameData:
         return arr, w, h
 
     def _build_base_dist(self):
+        # Varsayılan olarak tüm haritayı engelli (BLOCKED_INIT) yapıyoruz
         base = np.full((self.mapW, self.mapH), BLOCKED_INIT, dtype=np.int32)
+        
         for x in range(self.mapW):
             for y in range(self.mapH):
-                if self.map[x, y] in (' ', 'D', 'F', 'V', 'S', 'M'):
+                # S, M, # ve yeni eklediğimiz W harfi bu listede OLMADIĞI için 
+                # otomatik olarak ENGELLİ (duvar gibi) kabul edilecekler.
+                if self.map[x, y] in (' ', 'D', 'F', 'V'):
                     base[x, y] = WALKABLE_INIT
         return base
 
@@ -192,6 +196,9 @@ class GameData:
         if pos in self.cities:
             self.cities[pos] += 1
             self.total_furniture_delivered += 1
+            
+            self.money += 9
+            self.floating_texts.append(FloatingText(pos[0], pos[1], "+$9"))
 
     def forest_exhausted(self, pos):
         return self.forests.get(pos, 0) <= 0
@@ -216,8 +223,8 @@ class Screen:
         self.screen = pygame.display.set_mode((self.W, self.H))
         pygame.display.set_caption("Transport Tycoon - Chaîne Logistique")
         self.clock = pygame.time.Clock()
-        self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.45)), bold=True)
-        self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.35)))
+        self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.35)), bold=True)
+        self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.30)))
 
         # Chargement et redimensionnement des images de camions
         self.truck_images = []
@@ -253,6 +260,37 @@ class Screen:
         except Exception as e:
             print(f"Erreur : Impossible de charger BrickHouse.png ! {e}")
 
+        # ── CHARGEMENT DE BRICKTILES.PNG ──
+
+        self.tile_img = None
+        try:
+            path = os.path.join(ASSETS_DIR, "BrickTiles.png")
+            img = pygame.image.load(path).convert_alpha()
+            # Resmi tam olarak bir harita karesi (ZOOM x ZOOM) boyutuna getiriyoruz
+            self.tile_img = pygame.transform.scale(img, (ZOOM, ZOOM))
+        except Exception as e:
+            print(f"Erreur : Impossible de charger BrickTiles.png ! {e}")
+
+# ── 1. ÇİMENİ YÜKLE (Duvarlar için) ──
+        self.grass_img = None
+        try:
+            path = os.path.join(ASSETS_DIR, "grass.png")
+            img = pygame.image.load(path).convert_alpha()
+            self.grass_img = pygame.transform.smoothscale(img, (ZOOM, ZOOM))
+        except Exception as e:
+            print(f"Grass yüklenemedi: {e}")
+
+        # ── 2. SUYU YÜKLE (W kareleri için) ──
+        # Burayı kontrol et, silinmiş veya ismi değişmiş olabilir!
+        self.water_img = None
+        try:
+            path = os.path.join(ASSETS_DIR, "water.png")
+            img = pygame.image.load(path).convert_alpha()
+            self.water_img = pygame.transform.smoothscale(img, (ZOOM, ZOOM))
+        except Exception as e:
+            print(f"Water yüklenemedi: {e}")
+
+
         # ── CHARGEMENT DE FACTORY.PNG & ISOMETRIC_OFFICE_5.PNG ──
         # ── CHARGEMENT DE FACTORY.PNG ──
         self.factory_asset = None
@@ -282,7 +320,16 @@ class Screen:
             self.deadtree_img = pygame.transform.scale(deadtree, (ZOOM, ZOOM))
         except Exception as e:
             print(f"Info : Impossible de charger les images d'arbres ({e}).")
-
+    # ── CHARGEMENT DE TREASURE.PNG ──
+        self.treasure_icon = None
+        try:
+            path = os.path.join(ASSETS_DIR, "treasure.png")
+            img = pygame.image.load(path).convert_alpha()
+            # Alt barın yüksekliğine (ZOOM değerine) göre resmi orantılı ölçekliyoruz (Yaklaşık %60'ı kadar)
+            icon_size = int(ZOOM * 0.6)
+            self.treasure_icon = pygame.transform.scale(img, (icon_size, icon_size))
+        except Exception as e:
+            print(f"Erreur : Impossible de charger treasure.png ! {e}")
     def grid_to_screen(self, x, y):
         return int(x * ZOOM), int(y * ZOOM)
 
@@ -372,6 +419,39 @@ class Screen:
     def show(self):
         pygame.display.flip()
 
+# ── Classe Coin Text  ───────────────────────────────────────────────────
+
+class FloatingText:
+    def __init__(self, grid_x, grid_y, text, color=(255, 215, 0)):
+        self.x = grid_x + 0.5  # Karenin ortasından başlasın
+        self.y = grid_y
+        self.text = text
+        self.color = color
+        self.lifetime = 1.0    # 1 saniye boyunca ekranda kalacak
+        self.vel_y = -1.2      # Yukarı doğru yükselme hızı
+
+    def update(self, dt):
+        self.y += self.vel_y * dt
+        self.lifetime -= dt
+
+    def draw(self, S):
+        # Yazının yukarı doğru çıkarken yavaşça şeffaflaşması (Fade-out efekti)
+        alpha = max(0, min(255, int(self.lifetime * 255)))
+        
+        # Kalın ve biraz daha büyük fontla parayı basalım
+        S.font.set_bold(True)
+        surf = S.font.render(self.text, True, self.color)
+        
+        # Şeffaflık uygulamak için geçici bir yüzey kullanıyoruz
+        alpha_surf = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
+        alpha_surf.fill((255, 255, 255, alpha))
+        surf.blit(alpha_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        
+        # Piksel koordinatlarına çevirip ekrana basıyoruz
+        sx = int(self.x * ZOOM) - surf.get_width() // 2
+        sy = int(self.y * ZOOM)
+        S.screen.blit(surf, (sx, sy))
+        S.font.set_bold(False)
 
 # ── Classe Camion (Truck) ───────────────────────────────────────────────────
 
@@ -567,62 +647,134 @@ class Truck:
 # ── Éléments de Dessin et d'Arrière-Plan ─────────────────────────────────────
 
 COLOR_ROAD         = (235, 230, 225)
-COLOR_WALL         = (110, 110, 110)   
+COLOR_WALL         = (35, 110, 55)   
 COLOR_FOREST_EMPTY = (150, 125, 100)
 COLOR_CITY_BASE    = (205, 195, 175)
 COLOR_CITY_DONE    = (100, 210, 130)
 COLOR_DEPOT        = (140, 140, 185)   
 COLOR_GRID         = (220, 215, 205)
 
-def build_background(game: GameData, S: Screen):
-    surf = pygame.Surface((S.W, S.H))
-    surf.fill((30, 30, 30))
+def build_background(game, S):
+    bg = pygame.Surface((S.W, S.H))
+    
+    # --- 1. ADIM: TÜM HARİTAYI BRICKTILES (YOL) İLE DÖŞE ---
+    if S.tile_img:
+        for x in range(game.mapW):
+            for y in range(game.mapH):
+                bg.blit(S.tile_img, (x * ZOOM, y * ZOOM))
+    else:
+        bg.fill(COLOR_ROAD)
 
+    # --- 2. ADIM: DUVARLARI (#) VE SULARI (W) DOKUYLA KAPLA ---
     for x in range(game.mapW):
         for y in range(game.mapH):
-            c = game.map[x, y]
-            if c == '#':
-                color = COLOR_WALL
-            elif c in ('F', 'S', 'M'):
-                color = COLOR_ROAD
-            elif c == 'V':
-                color = COLOR_CITY_BASE
-            elif c == 'D':
-                color = COLOR_DEPOT
-            else:
-                color = COLOR_ROAD
+            char = game.map[x, y]
+            px = x * ZOOM
+            py = y * ZOOM
 
-            sx, sy = S.grid_to_screen(x, y)
-            pygame.draw.rect(surf, color, (sx, sy, ZOOM, ZOOM))
-            if c != '#':
-                pygame.draw.rect(surf, COLOR_GRID, (sx, sy, ZOOM, ZOOM), 1)
-    return surf
+            # A) DUVARLAR (#) -> ARTIK ÇİMEN RESMİ
+            if char == '#':
+                if hasattr(S, 'grass_img') and S.grass_img:
+                    bg.blit(S.grass_img, (px, py))
+                else:
+                    pygame.draw.rect(bg, COLOR_WALL, (px, py, ZOOM, ZOOM))
+            
+
+            # B) YENİ SU BÖLGELERİ (W)
+            elif char == 'W':
+                if hasattr(S, 'water_img') and S.water_img:
+                    bg.blit(S.water_img, (px, py))
+                else:
+                    # EĞER RESMİ BULAMAZSA BURASI ÇALIŞACAK: 
+                    # Haritada parlak kırmızı kareler görüyorsan bil ki sorun RESMİN YÜKLENEMEMESİDİR.
+                    pygame.draw.rect(bg, (255, 0, 0), (px, py, ZOOM, ZOOM))
+
+    return bg
+
+
+def get_region_top_lefts(game, char_type):
+    """Haritada yan yana duran aynı harf gruplarının sadece en sol-üst karesini döner."""
+    visited = set()
+    top_lefts = []
+    
+    for x in range(game.mapW):
+        for y in range(game.mapH):
+            if game.map[x, y] == char_type and (x, y) not in visited:
+                # Yeni bir bölge başlangıcı (BFS ile tamamını ziyaret edelim ki tekrar saymasın)
+                queue = [(x, y)]
+                visited.add((x, y))
+                region_cells = [(x, y)]
+                
+                head = 0
+                while head < len(queue):
+                    cx, cy = queue[head]
+                    head += 1
+                    for dx, dy in [(1,0), (-1,0), (0,1), (0,-1)]:
+                        nx, ny = cx + dx, cy + dy
+                        if 0 <= nx < game.mapW and 0 <= ny < game.mapH:
+                            if game.map[nx, ny] == char_type and (nx, ny) not in visited:
+                                visited.add((nx, ny))
+                                queue.append((nx, ny))
+                                region_cells.append((nx, ny))
+                
+                # Bölgenin en sol üst karesini (önce x'i en küçük, sonra y'si en küçük) bulalım
+                sorted_cells = sorted(region_cells, key=lambda p: (p[0], p[1]))
+                top_lefts.append(sorted_cells[0])
+                
+    return top_lefts
+def draw_fancy_text(S, grid_x, grid_y, text, text_color=(255, 255, 255), bg_color=(0, 0, 0, 150), padding=6, radius=8):
+    """
+    Kare koordinatlarına göre kalın, renkli ve arkası oval (yuvarlatılmış) arka planlı yazı yazar.
+    """
+    # 1. Yazı tipini kalın (Bold) yapıyoruz
+    S.font.set_bold(True)
+    
+    # 2. Metni oluşturuyoruz (Render)
+    text_surf = S.font.render(text, True, text_color)
+    
+    # 3. Kare koordinatlarını (grid) ekrandaki piksel koordinatlarına çeviriyoruz
+    # (Not: Kodunuzdaki dönüşüm mantığına göre S.X veya S.ZOOM ile çarpılıyor olabilir, burayı kendi sisteminize göre eşitleyin)
+    pixel_x = int(grid_x * ZOOM)
+    pixel_y = int(grid_y * ZOOM)
+    
+    # 4. Oval arka planın boyutlarını yazının boyutuna göre hesaplıyoruz (padding = kenar boşluğu)
+    bg_w = text_surf.get_width() + (padding * 2)
+    bg_h = text_surf.get_height() + (padding * 2)
+    
+    # Yazının arka planın tam ortasına gelmesi için ofsetler
+    bg_x = pixel_x - padding
+    bg_y = pixel_y - padding
+    
+    # 5. Saydam arka plan desteği için geçici bir yüzey (Surface) oluşturuyoruz
+    # bg_color içindeki 4. değer (Alfa) saydamlığı belirler (0: Tam saydam, 255: Opak)
+    bg_surf = pygame.Surface((bg_w, bg_h), pygame.SRCALPHA)
+    
+    # 6. Oval dikdörtgeni bu geçici yüzeye çiziyoruz (radius = oval köşe yarıçapı)
+    pygame.draw.rect(bg_surf, bg_color, (0, 0, bg_w, bg_h), border_radius=radius)
+    
+    # 7. Önce arka planı, sonra yazıyı ekrana basıyoruz (Blit)
+    S.screen.blit(bg_surf, (bg_x, bg_y))
+    S.screen.blit(text_surf, (pixel_x, pixel_y))
+    
+    # İşi bittikten sonra fontu eski normal haline döndürüyoruz ki diğer yazılar kalın olmasın
+    S.font.set_bold(False)
 
 def draw_map(game, S, background, trucks, spawn_timer):
     S.screen.blit(background, (0, 0))
 
-    # ── DESSIN DE LA GRANDE SCIERIE (S) - UNE SEULE ET UNIQUE IMAGE ──
+    # ── DESSIN DE LA GRANDE SCIERIE (S) ──
     if game.scieries:
-        # On trie pour choper le pixel le plus en haut à gauche
         sorted_s = sorted(game.scieries, key=lambda p: (p[0], p[1]))
         first_s = sorted_s[0]
         S.drawLargeScierieSprite(first_s[0], first_s[1])
 
-    # ── DESSIN DE LA GRANDE FABRIQUE DE MEUBLES (M) - UNE SEULE ET UNIQUE IMAGE ──
+    # ── DESSIN DE LA GRANDE FABRIQUE DE MEUBLES (M) ──
     if game.factories:
-        # On trie rigoureusement par axe X puis par axe Y pour choper le pixel le plus en haut à gauche
         factories_sorted = sorted(game.factories, key=lambda p: (p[0], p[1]))
         exact_top_left_m = factories_sorted[0]
-        
-        first_m_x = exact_top_left_m[0]
-        first_m_y = exact_top_left_m[1]
-        
-        # ON APPELLE LA FONCTION UNE SEULE FOIS (DÖNGÜ KALDIRILDI)
-        S.drawLargeFactorySprite(first_m_x, first_m_y)
+        S.drawLargeFactorySprite(exact_top_left_m[0], exact_top_left_m[1])
 
-    # ── IMPORTANT : Eski "for (x, y) in game.factories:" döngüsü üst üste binmeyi önlemek için tamamen silindi ──
-
-    # Affichage des villes (V)
+    # ── RENDU DES VILLES (V) ──
     for (x, y), count in game.cities.items():
         if count > 0:
             ratio = min(1.0, count / 5.0)
@@ -636,25 +788,53 @@ def draw_map(game, S, background, trucks, spawn_timer):
             
         S.drawCitySprite(x, y)
 
-    # Rendu des symboles de forêt
+    # ── RENDU DES FORETS (F) ──
     for (x, y), wood in game.forests.items():
         if S.pintree_img and S.deadtree_img:
-            if wood == WOOD_PER_FOREST: # 2 interactions restantes
+            if wood == WOOD_PER_FOREST:
                 S.drawImage(x, y, S.pintree_img)
             elif wood > 0:
                 S.drawImage(x, y, S.deadtree_img)
-            else:
-                pass
         else:
-            # Rendu textuel de secours (Fallback) si les images ne sont pas chargées
             if wood == WOOD_PER_FOREST:
                 S.drawText(x, y, "🌲", big=False, centered=True)
             elif wood > 0:
                 S.drawText(x, y, "🌱", big=False, centered=True)
-            else:
-                S.drawText(x, y, "❌", big=False, centered=True)
 
-    # Dessiner les camions
+# ── METİNLER : DAHA DA YUKARI KAYDIRILMIŞ KOORDİNATLAR ──
+
+    # Scierie (S) - 'ty - 0.5' idi, 'ty - 1.2' yaparak bir kare boyundan fazla yukarı taşıdık
+    for tx, ty in get_region_top_lefts(game, 'S'):
+        draw_fancy_text(S, tx + 0.2, ty - 1.2, "Scierie", 
+                        text_color=(255, 255, 255), 
+                        bg_color=(30, 30, 30, 200))
+
+    # Fabrique (M) - İzometrik çatı yüksekliğini kurtarmak için 'ty - 1.4' e çekildi
+    for tx, ty in get_region_top_lefts(game, 'M'):
+        draw_fancy_text(S, tx + 0.1, ty - 1.4, "Fabrique", 
+                        text_color=(255, 255, 255), 
+                        bg_color=(30, 30, 30, 200))
+
+    # Ormanlar (F) - Ağaçların yapraklarının üzerine, tam tepelerine gelmesi için 'ty - 0.8' yapıldı
+    for tx, ty in get_region_top_lefts(game, 'F'):
+        if game.forests.get((tx, ty), 0) > 0:
+            draw_fancy_text(S, tx + 0.1, ty - 0.8, "Forêt", 
+                            text_color=(10, 60, 10), 
+                            bg_color=(200, 240, 200, 180))
+
+    # Şehirler (V) - Ev çatılarının yukarısında durması için 'ty - 0.8' yapıldı
+    for tx, ty in get_region_top_lefts(game, 'V'):
+        draw_fancy_text(S, tx + 0.1, ty - 0.8, "Ville", 
+                        text_color=(0, 0, 0), 
+                        bg_color=(255, 220, 150, 180))
+
+    # Depolar (D) - Garaj alanının bir kare yukarısına 'ty - 0.8' ile taşındı
+    for tx, ty in get_region_top_lefts(game, 'D'):
+        draw_fancy_text(S, tx + 0.1, ty - 0.8, "Dépôt", 
+                        text_color=(240, 240, 255), 
+                        bg_color=(50, 50, 150, 180))
+
+    # ── DESSINER LES TRUCKS ──
     for truck in trucks:
         truck.draw(S)
 
@@ -672,6 +852,45 @@ def draw_map(game, S, background, trucks, spawn_timer):
     txt = f"Livraisons : {total}  |  Bois Restant : {remaining}  |  Camions : {len(trucks)}/{MAX_TRUCKS}{timer_text}"
     surf = S.font.render(txt, True, (240, 240, 240))
     S.screen.blit(surf, (15, bar_y + (ZOOM // 2 - surf.get_height() // 2)))
+    # ── draw_map fonksiyonunun içinde, en alttaki S.show()'dan hemen önceye ekleyin ──
+    for ft in game.floating_texts:
+        ft.draw(S)
+
+    # ── Alt Bar Metnini de Güncelleyelim (Kazanılan Para Göstergesi) ──
+    # ── Alt Bar Çizimi ──
+    bar_y = S.H - ZOOM
+    pygame.draw.rect(S.screen, (25, 25, 25), (0, bar_y, S.W, ZOOM))
+    
+    total = game.total_furniture_delivered
+    remaining = sum(game.forests.values())
+    
+    if len(trucks) < MAX_TRUCKS:
+        timer_text = f" | Nouveau : {max(0.0, spawn_timer):.1f}s"
+    else:
+        timer_text = " | Garage Plein (Max 5)"
+
+    # Yazıların dikeyde tam ortalanması için gereken Y koordinatı
+    text_center_y = bar_y + (ZOOM // 2 - S.font.size("A")[1] // 2)
+    current_x = 15  # Sol kenardan başlama mesafesi
+
+    # 1. Hazine İkonunu Çizdirme (Eğer başarıyla yüklendiyse)
+    if S.treasure_icon:
+        icon_rect = S.treasure_icon.get_rect()
+        icon_rect.left = current_x
+        icon_rect.centery = bar_y + (ZOOM // 2)
+        S.screen.blit(S.treasure_icon, icon_rect.topleft)
+        current_x += S.treasure_icon.get_width() + 8  # İkonun genişliği + boşluk kadar sağa kaydır
+
+    # 2. Para Miktarını Yazdırma (Sarı renkle parlaması için rengini değiştirdik)
+    money_text = f"Trésor: ${game.money}"
+    money_surf = S.font.render(money_text, True, (255, 215, 0)) # Altın sarısı
+    S.screen.blit(money_surf, (current_x, text_center_y))
+    current_x += money_surf.get_width() + 20  # Para yazısı bittikten sonra diğer metin için boşluk bırak
+
+    # 3. Geri Kalan İstatistikleri Yazdırma (Beyaz renk)
+    stats_text = f"|  Livraisons: {total}  |  Bois: {remaining}  |  Camions: {len(trucks)}/{MAX_TRUCKS}{timer_text}"
+    stats_surf = S.font.render(stats_text, True, (240, 240, 240))
+    S.screen.blit(stats_surf, (current_x, text_center_y))
 
     S.show()
 
@@ -713,7 +932,10 @@ def main():
                     
                     for truck in trucks:
                         truck.update(game, dt)
-                    
+
+                    for ft in game.floating_texts:
+                        ft.update(dt)
+                    game.floating_texts = [ft for ft in game.floating_texts if ft.lifetime > 0]
                     if len(trucks) < MAX_TRUCKS:
                         spawn_timer -= dt
                         if spawn_timer <= 0:
