@@ -6,7 +6,7 @@ import numpy as np
 import pygame
 from numba import njit
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# Constants 
 
 WALKABLE_INIT   = 100
 BLOCKED_INIT    = 999
@@ -21,7 +21,7 @@ MIN_ZOOM        = 20
 ASSETS_DIR      = "assets"
 ZOOM            = DEFAULT_ZOOM
 
-# ── Distance Map using Numba (Wavefront Algorithm) ───────────────────────────
+# Distance Map using Numba (Wavefront Algorithm) 
 
 @njit(cache=True)
 def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
@@ -59,7 +59,7 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     return iterations
 
 
-# ── Map Layout ───────────────────────────────────────────────────────────────
+# Map Layout 
 
 MAP_TEXT = """
 #######################
@@ -79,7 +79,7 @@ MAP_TEXT = """
 """
 
 
-# ── Game Data ────────────────────────────────────────────────────────────────
+# Game Data 
 
 class GameData:
     def __init__(self, map_text):
@@ -162,7 +162,7 @@ class GameData:
             self.floating_texts.append(FloatingText(pos[0], pos[1] + 0.4, "Gas: -$3", color=(255, 50, 50)))
 
 
-# ── Screen and Graphics ───────────────────────────────────────────────────────
+# Screen and Graphics 
 
 class Screen:
     def __init__(self, nx, ny):
@@ -292,7 +292,7 @@ class Screen:
         pygame.display.flip()
 
 
-# ── Floating Text ─────────────────────────────────────────────────────────────
+# Floating Text 
 
 class FloatingText:
     def __init__(self, grid_x, grid_y, text, color=(255, 215, 0)):
@@ -322,7 +322,7 @@ class FloatingText:
         S.font.set_bold(False)
 
 
-# ── Truck ─────────────────────────────────────────────────────────────────────
+# Truck 
 
 class Truck:
     _id_counter = 0
@@ -348,7 +348,7 @@ class Truck:
         self.dist = np.empty_like(game.base_dist)
         self._pick_forest_target(game)
 
-    # ── Target selection ──────────────────────────────────────────────────────
+    #Target selection 
 
     def _pick_forest_target(self, game):
         avail = game.available_forests()
@@ -413,10 +413,10 @@ class Truck:
             return False
         return game.map[x, y] != '#'
 
-    # ── Pathfinding with deadlock prevention ──────────────────────────────────
+    # Pathfinding with deadlock prevention 
 
     def _next_grid_step(self, game, all_trucks):
-        # Cases réservées par les autres camions (position actuelle ET prochaine)
+        # Determine reserved positions by other trucks
         reserved = set()
         for t in all_trucks:
             if t.tid != self.tid:
@@ -549,13 +549,12 @@ class Truck:
             self.x += self.dir[0] * step
             self.y += self.dir[1] * step
 
-        # Anti ping-pong : si deux camions visent la case de l'autre, le plus grand tid recule
+        # Deadlock prevention: if two trucks are trying to swap places, the one with the higher tid backs off
         for t in all_trucks:
             if t.tid != self.tid:
-                # Ils se visent mutuellement
+                # Check if they are trying to swap positions
                 if (self.nx, self.ny) == (t.cx, t.cy) and (t.nx, t.ny) == (self.cx, self.cy):
                     if self.tid > t.tid:
-                        # On recule sur notre case actuelle
                         self.nx, self.ny = self.cx, self.cy
                         self.x = self.cx + 0.5
                         self.y = self.cy + 0.5
@@ -565,7 +564,7 @@ class Truck:
         S.drawTruckSprite(self.x, self.y, self.dir[0], self.dir[1], self.img_index, self.cargo)
 
 
-# ── Background and Map Drawing ────────────────────────────────────────────────
+# Background and Map Drawing 
 
 COLOR_ROAD = (235, 230, 225)
 COLOR_WALL = (35, 110, 55)
@@ -705,7 +704,7 @@ def draw_map(game, S, background, trucks):
         S.screen.blit(go_surf, ((S.W - go_surf.get_width()) // 2, (S.H - go_surf.get_height()) // 2))
 
 
-# ── Main Game Loop ────────────────────────────────────────────────────────────
+#Main Game Loop
 
 def main():
     pygame.init()
