@@ -72,7 +72,7 @@ MAP_TEXT = """
 # SSS         ##  MMM #
 #        ####     ### #
 # ##     #WW#         #
-#        ######### VVV#
+#        ######    VVV#
 ####               VVV#
 #                     #
 #######################
@@ -158,8 +158,8 @@ class GameData:
             self.total_furniture_delivered += 1
             self.money += 9
             self.floating_texts.append(FloatingText(pos[0], pos[1], "+$9"))
-            self.money -= 5
-            self.floating_texts.append(FloatingText(pos[0], pos[1] + 0.4, "Gas: -$5", color=(255, 50, 50)))
+            self.money -= 3
+            self.floating_texts.append(FloatingText(pos[0], pos[1] + 0.4, "Gas: -$3", color=(255, 50, 50)))
 
 
 # ── Screen and Graphics ───────────────────────────────────────────────────────
