@@ -64,8 +64,8 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
 MAP_TEXT = """
 #######################
 ########          #WWW#
-#FFFFFF#    ##### #####
-#                     #
+#FFFFFF     ##### #####
+#FFFFFF               #
 #         # #         #
 #         # #DD#  #####
 # SSS        DD#  MMM #
@@ -156,8 +156,8 @@ class GameData:
         if pos in self.cities:
             self.cities[pos] += 1
             self.total_furniture_delivered += 1
-            self.money += 9
-            self.floating_texts.append(FloatingText(pos[0], pos[1], "+$9"))
+            self.money += 20
+            self.floating_texts.append(FloatingText(pos[0], pos[1], "+$20", color=(50, 255, 50)))
             self.money -= 3
             self.floating_texts.append(FloatingText(pos[0], pos[1] + 0.4, "Gas: -$3", color=(255, 50, 50)))
 
@@ -338,8 +338,7 @@ class Truck:
         self.y = self.cy + 0.5
 
         self.dir   = (0.0, -1.0)
-        self.speed = TRUCK_SPEED + random.uniform(-0.2, 0.2)
-
+        self.speed = TRUCK_SPEED * random.uniform(0.4, 1.6)
         self.cargo      = None
         self.state      = "seeking_forest"
         self.timer      = 0.0
