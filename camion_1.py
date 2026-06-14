@@ -6,28 +6,27 @@ import numpy as np
 import pygame
 from numba import njit
 
-# ── Constantes ──────────────────────────────────────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────────
 
 WALKABLE_INIT   = 100
 BLOCKED_INIT    = 999
-TRUCK_SPEED     = 4.0        
-LOAD_TIME       = 1.0        
-UNLOAD_TIME     = 0.8        
-WOOD_PER_FOREST = 2          
-MAX_TRUCKS      = 5          
-SPAWN_INTERVAL  = 5.0        
-DEFAULT_ZOOM    = 45         
+TRUCK_SPEED     = 4.0
+LOAD_TIME       = 1.0
+UNLOAD_TIME     = 0.8
+WOOD_PER_FOREST = 2
+MAX_TRUCKS      = 5
+DEFAULT_ZOOM    = 45
 MIN_ZOOM        = 20
 
-# Dossier des ressources (images)
 ASSETS_DIR      = "assets"
-ZOOM            = DEFAULT_ZOOM  
+ZOOM            = DEFAULT_ZOOM
 
-# ── Carte de Distance avec Numba (Algorithme Wavefront) ──────────────────────
+# ── Distance Map using Numba (Wavefront Algorithm) ───────────────────────────
 
 @njit(cache=True)
 def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     w, h = base_dist.shape
+
     for x in range(w):
         for y in range(h):
             out_dist[x, y] = base_dist[x, y]
@@ -60,11 +59,11 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     return iterations
 
 
-# ── Structure de la Carte (20x12) ───────────────────────────────────────────
+# ── Map Layout ───────────────────────────────────────────────────────────────
 
 MAP_TEXT = """
 #######################
-#FFFFFF#          #WWW#
+########          #WWW#
 #FFFFFF#    ##### #####
 #                     #
 #         # #         #
@@ -79,52 +78,29 @@ MAP_TEXT = """
 #######################
 """
 
+
+# ── Game Data ────────────────────────────────────────────────────────────────
+
 class GameData:
     def __init__(self, map_text):
         self.map, self.mapW, self.mapH = self._parse(map_text)
         self.base_dist = self._build_base_dist()
+        self.game_over = False
 
-        self.forests = {}
-        for x in range(self.mapW):
-            for y in range(self.mapH):
-                if self.map[x, y] == 'F':
-                    self.forests[(x, y)] = WOOD_PER_FOREST
-
-        self.scieries = []
-        for x in range(self.mapW):
-            for y in range(self.mapH):
-                if self.map[x, y] == 'S':
-                    self.scieries.append((x, y))
-
-        self.factories = []
-        for x in range(self.mapW):
-            for y in range(self.mapH):
-                if self.map[x, y] == 'M':
-                    self.factories.append((x, y))
-
-        self.cities = {}
-        for x in range(self.mapW):
-            for y in range(self.mapH):
-                if self.map[x, y] == 'V':
-                    self.cities[(x, y)] = 0
-
-        self.depots = []
-        for x in range(self.mapW):
-            for y in range(self.mapH):
-                if self.map[x, y] == 'D':
-                    self.depots.append((x, y))
+        self.forests   = {(x, y): WOOD_PER_FOREST for x in range(self.mapW) for y in range(self.mapH) if self.map[x, y] == 'F'}
+        self.scieries  = [(x, y) for x in range(self.mapW) for y in range(self.mapH) if self.map[x, y] == 'S']
+        self.factories = [(x, y) for x in range(self.mapW) for y in range(self.mapH) if self.map[x, y] == 'M']
+        self.cities    = {(x, y): 0 for x in range(self.mapW) for y in range(self.mapH) if self.map[x, y] == 'V'}
+        self.depots    = [(x, y) for x in range(self.mapW) for y in range(self.mapH) if self.map[x, y] == 'D']
 
         self.total_furniture_delivered = 0
-        self.money = 20
-        self.truck_price = 10  
+        self.money       = 20
+        self.truck_price = 10
         self.floating_texts = []
-        self.game_over = False  
-        self.is_buy_button_pressed = False
 
     def _parse(self, text):
         rows = [line for line in text.strip().splitlines() if line.strip()]
         maxlen = max(len(r) for r in rows)
-        
         parsed = []
         for row in rows:
             cells = []
@@ -134,7 +110,6 @@ class GameData:
                 else:
                     cells.append(' ')
             parsed.append(cells)
-
         arr = np.array(parsed, dtype='U1').T
         w, h = arr.shape
         return arr, w, h
@@ -181,15 +156,13 @@ class GameData:
         if pos in self.cities:
             self.cities[pos] += 1
             self.total_furniture_delivered += 1
-            
             self.money += 9
             self.floating_texts.append(FloatingText(pos[0], pos[1], "+$9"))
-            
-            self.money -= 2  
-            self.floating_texts.append(FloatingText(pos[0], pos[1] + 0.4, "Gas: -$2", color=(255, 50, 50)))
+            self.money -= 5
+            self.floating_texts.append(FloatingText(pos[0], pos[1] + 0.4, "Gas: -$5", color=(255, 50, 50)))
 
 
-# ── Gestion de l'Écran et des Graphismes ─────────────────────────────────────
+# ── Screen and Graphics ───────────────────────────────────────────────────────
 
 class Screen:
     def __init__(self, nx, ny):
@@ -202,9 +175,9 @@ class Screen:
         ZOOM = max(MIN_ZOOM, min(DEFAULT_ZOOM, max_w // nx, max_h // (ny + 1)))
 
         self.W = nx * ZOOM
-        self.H = (ny + 1) * ZOOM 
+        self.H = (ny + 1) * ZOOM
         self.screen = pygame.display.set_mode((self.W, self.H))
-        pygame.display.set_caption("Transport Tycoon - Logistique")
+        pygame.display.set_caption("Transport Tycoon - Logistics")
         self.clock = pygame.time.Clock()
         self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.35)), bold=True)
         self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.30)))
@@ -215,13 +188,12 @@ class Screen:
             return surf
 
         self.truck_images = []
-        image_names = ["car-truck2.png", "car-truck3.png", "car-truck4.png", "car-truck5.png"]
-        for name in image_names:
+        for name in ["car-truck2.png", "car-truck3.png", "car-truck4.png", "car-truck5.png"]:
             path = os.path.join(ASSETS_DIR, name)
             try:
                 img = pygame.image.load(path).convert_alpha()
                 orig_w, orig_h = img.get_size()
-                target_w = int(ZOOM * 0.55) 
+                target_w = int(ZOOM * 0.55)
                 target_h = int(target_w * (orig_h / orig_w))
                 if target_h > int(ZOOM * 0.85):
                     target_h = int(ZOOM * 0.85)
@@ -259,7 +231,7 @@ class Screen:
             self.factory_asset = pygame.transform.scale(self.factory_asset, (int(ZOOM * 3), int(ZOOM * 2.5)))
         except Exception:
             self.factory_asset = create_fallback(int(ZOOM * 3), int(ZOOM * 2), (120, 120, 120))
-            
+
         try:
             self.office_asset = pygame.image.load(os.path.join(ASSETS_DIR, "isometric_office_5.png")).convert_alpha()
             self.office_asset = pygame.transform.scale(self.office_asset, (int(ZOOM * 3), int(ZOOM * 2.5)))
@@ -267,10 +239,10 @@ class Screen:
             self.office_asset = create_fallback(int(ZOOM * 3), int(ZOOM * 2), (70, 90, 120))
 
         try:
-            self.pintree_img = pygame.transform.scale(pygame.image.load(os.path.join(ASSETS_DIR, 'pintree.png')).convert_alpha(), (ZOOM, ZOOM))
+            self.pintree_img  = pygame.transform.scale(pygame.image.load(os.path.join(ASSETS_DIR, 'pintree.png')).convert_alpha(), (ZOOM, ZOOM))
             self.deadtree_img = pygame.transform.scale(pygame.image.load(os.path.join(ASSETS_DIR, 'deadtree.png')).convert_alpha(), (ZOOM, ZOOM))
         except Exception:
-            self.pintree_img = create_fallback(ZOOM, ZOOM, (35, 150, 55))
+            self.pintree_img  = create_fallback(ZOOM, ZOOM, (35, 150, 55))
             self.deadtree_img = create_fallback(ZOOM, ZOOM, (130, 100, 70))
 
         try:
@@ -286,11 +258,10 @@ class Screen:
         cx, cy = int(x * ZOOM), int(y * ZOOM)
         base_img = self.truck_images[img_index % len(self.truck_images)]
 
-        angle = 0
-        if dy < 0:    angle = 0    
-        elif dy > 0:  angle = 180  
-        elif dx > 0:  angle = 270  
-        elif dx < 0:  angle = 90   
+        if   dy < 0: angle = 0
+        elif dy > 0: angle = 180
+        elif dx > 0: angle = 270
+        else:        angle = 90
 
         rotated_img = pygame.transform.rotate(base_img, angle)
         rect = rotated_img.get_rect(center=(cx, cy))
@@ -321,72 +292,72 @@ class Screen:
         pygame.display.flip()
 
 
-# ── Classe Coin Text ───────────────────────────────────────────────────
+# ── Floating Text ─────────────────────────────────────────────────────────────
 
 class FloatingText:
     def __init__(self, grid_x, grid_y, text, color=(255, 215, 0)):
-        self.x = grid_x + 0.5
-        self.y = grid_y
-        self.text = text
-        self.color = color
+        self.x        = grid_x + 0.5
+        self.y        = grid_y
+        self.text     = text
+        self.color    = color
         self.lifetime = 2.0
-        self.vel_y = -1.0
+        self.vel_y    = -1.0
 
     def update(self, dt):
-        self.y += self.vel_y * dt
+        self.y        += self.vel_y * dt
         self.lifetime -= dt
 
     def draw(self, S):
-        if self.lifetime <= 0: return
+        if self.lifetime <= 0:
+            return
         alpha = max(0, min(255, int(self.lifetime * 255)))
         S.font.set_bold(True)
         surf = S.font.render(self.text, True, self.color)
-        
         alpha_surf = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
         alpha_surf.fill((255, 255, 255, alpha))
         surf.blit(alpha_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        
         sx = int(self.x * ZOOM) - surf.get_width() // 2
         sy = int(self.y * ZOOM)
         S.screen.blit(surf, (sx, sy))
         S.font.set_bold(False)
 
 
-# ── Classe Camion (Truck) ───────────────────────────────────────────────────
+# ── Truck ─────────────────────────────────────────────────────────────────────
 
 class Truck:
     _id_counter = 0
 
     def __init__(self, game: GameData, depot_pos):
         Truck._id_counter += 1
-        self.tid  = Truck._id_counter
+        self.tid       = Truck._id_counter
         self.img_index = (self.tid - 1) % 4
 
-        self.cx, self.cy = depot_pos 
-        self.nx, self.ny = depot_pos 
+        self.cx, self.cy = depot_pos
+        self.nx, self.ny = depot_pos
         self.x = self.cx + 0.5
         self.y = self.cy + 0.5
-        
-        self.dir  = (0.0, -1.0) 
+
+        self.dir   = (0.0, -1.0)
         self.speed = TRUCK_SPEED + random.uniform(-0.2, 0.2)
 
-        self.cargo = None 
-        self.state = "seeking_forest"
-        self.timer = 0.0
-        self.wait_timer = 0.0
+        self.cargo      = None
+        self.state      = "seeking_forest"
+        self.timer      = 0.0
         self.target_pos = None
 
         self.dist = np.empty_like(game.base_dist)
         self._pick_forest_target(game)
 
+    # ── Target selection ──────────────────────────────────────────────────────
+
     def _pick_forest_target(self, game):
         avail = game.available_forests()
         if not avail:
-            self.state = "idle"
-            self.target_pos = None
-            game.computeDistanceMap(np.empty((0, 2), dtype=np.int32), self.dist)
+            # No forests left → end game
+            game.game_over = True
             return
 
+        # Pick forest with best wood-per-distance ratio
         best, best_score = None, -1
         for (fx, fy), wood in avail:
             dist = abs(fx - self.cx) + abs(fy - self.cy) or 1
@@ -442,16 +413,17 @@ class Truck:
             return False
         return game.map[x, y] != '#'
 
-    # ── Geliştirilmiş Trafik ve Kilitlenme Engelleyici Motor ──
+    # ── Pathfinding with deadlock prevention ──────────────────────────────────
+
     def _next_grid_step(self, game, all_trucks):
-        # Cases occupées par les autres trucks
-        occupied = set()
+        # Cases réservées par les autres camions (position actuelle ET prochaine)
+        reserved = set()
         for t in all_trucks:
             if t.tid != self.tid:
-                occupied.add((t.cx, t.cy))
-                occupied.add((t.nx, t.ny))
+                reserved.add((t.cx, t.cy))
+                reserved.add((t.nx, t.ny))
 
-        # 4 voisins walkables avec leur distance
+        # Voisins walkables triés par distance
         cands = []
         for ddx, ddy in [(0,-1),(0,1),(-1,0),(1,0)]:
             nx, ny = self.cx + ddx, self.cy + ddy
@@ -466,51 +438,55 @@ class Truck:
             return
 
         cands.sort(key=lambda item: item[0])
-        best_dist = cands[0][0]
 
-        # 1. Önce optimal yolu dene (en kısa)
+        # 1. Meilleure case libre
         for nd, nx, ny in cands:
-            if (nx, ny) not in occupied:
+            if (nx, ny) not in reserved:
                 self.nx, self.ny = nx, ny
                 return
 
-        # 2. Tüm optimal yollar bloke → daha uzun ama boş yolu dene
-        # Mevcut mesafeden daha kötü olan yolları da kabul et (deadlock kırıcı)
-        all_cands = []
-        for ddx, ddy in [(0,-1),(0,1),(-1,0),(1,0)]:
-            nx, ny = self.cx + ddx, self.cy + ddy
-            if not self._is_walkable(game, nx, ny):
-                continue
-            nd = self.dist[nx, ny]
-            # BLOCKED_INIT değil ama optimal olmayan yollar dahil
-            if nd < BLOCKED_INIT and (nx, ny) not in occupied:
-                all_cands.append((nd, nx, ny))
+        # 2. Toutes bloquées → camion avec le plus petit tid a priorité
+        # Le camion perdant attend sur place au lieu de foncer dans l'autre
+        best_nd, best_nx, best_ny = cands[0]
+        blocker_tid = None
+        for t in all_trucks:
+            if t.tid != self.tid and (t.cx, t.cy) == (best_nx, best_ny):
+                blocker_tid = t.tid
+                break
+            if t.tid != self.tid and (t.nx, t.ny) == (best_nx, best_ny):
+                blocker_tid = t.tid
+                break
 
-        if all_cands:
-            # En az kötü alternatifi seç
-            all_cands.sort(key=lambda item: item[0])
-            self.nx, self.ny = all_cands[0][1], all_cands[0][2]
+        # Si notre tid est plus grand, on cède le passage
+        if blocker_tid is not None and self.tid > blocker_tid:
+            self.nx, self.ny = self.cx, self.cy  # on attend
             return
 
-        # 3. Hiçbir yol yok → yerinde bekle (wait_timer devreye girer)
+        # Sinon on prend une case alternative
+        for ddx, ddy in [(0,-1),(0,1),(-1,0),(1,0)]:
+            nx, ny = self.cx + ddx, self.cy + ddy
+            if self._is_walkable(game, nx, ny) and (nx, ny) not in reserved:
+                self.nx, self.ny = nx, ny
+                return
+
+        # Vraiment bloqué → on attend
         self.nx, self.ny = self.cx, self.cy
 
     def update(self, game: GameData, all_trucks, dt):
-        # ── IDLE ──
+
+        # Idle: wait for a forest to become available
         if self.state == "idle":
             if game.available_forests():
                 self._pick_forest_target(game)
             return
 
-        # ── LOADING / UNLOADING : truck ne bouge pas ──
+        # Loading / Unloading: truck stays still until timer expires
         if self.state in ("loading", "unloading"):
             self.timer -= dt
             if self.timer > 0:
                 return
 
-            # Timer bitti → ne yapılacak?
             if self.state == "loading":
-                # Yükleme bitti, hedefe git
                 if self.cargo == "wood":
                     self._pick_scierie_target(game)
                 elif self.cargo == "planks":
@@ -519,23 +495,19 @@ class Truck:
                     self._pick_city_target(game)
 
             elif self.state == "unloading":
-                # Boşaltma bitti → cargo dönüşümü
                 if self.cargo == "wood":
-                    # Scierie'de: wood → planks, fabrique'e git
                     self.cargo = "planks"
                     self._pick_factory_target(game)
                 elif self.cargo == "planks":
-                    # Fabrique'de: planks → furniture, şehre git
                     self.cargo = "furniture"
                     self._pick_city_target(game)
                 elif self.cargo == "furniture":
-                    # Şehirde: teslim, tekrar ormana git
                     game.deliver(self.target_pos)
                     self.cargo = None
                     self._pick_forest_target(game)
             return
 
-        # ── ARRIVÉE SUR UNE CASE ──
+        # Arrived at current grid cell → decide next action
         if self.cx == self.nx and self.cy == self.ny:
             if self.target_pos:
                 tx, ty = self.target_pos
@@ -555,32 +527,10 @@ class Truck:
                         self.timer = UNLOAD_TIME
                         return
 
-            # Sonraki adımı hesapla
+            # Not at target yet → compute next step
             self._next_grid_step(game, all_trucks)
 
-        # ── ANTI-COLLISION PHYSIQUE ──
-        for t in all_trucks:
-            if t.tid != self.tid:
-                same_target = (self.nx, self.ny) == (t.nx, t.ny)
-                target_occupied = (self.nx, self.ny) == (t.cx, t.cy)
-                if target_occupied or (same_target and t.tid < self.tid):
-                    # Alternatif yol ara
-                    occupied = set()
-                    for ot in all_trucks:
-                        if ot.tid != self.tid:
-                            occupied.add((ot.cx, ot.cy))
-                            occupied.add((ot.nx, ot.ny))
-                    for ddx, ddy in [(0,-1),(0,1),(-1,0),(1,0)]:
-                        ax, ay = self.cx + ddx, self.cy + ddy
-                        if self._is_walkable(game, ax, ay) and (ax, ay) not in occupied:
-                            if self.dist[ax, ay] < BLOCKED_INIT:
-                                self.nx, self.ny = ax, ay
-                                return
-                    # Alternatif yoksa bekle
-                    self.nx, self.ny = self.cx, self.cy
-                    return
-
-        # ── MOUVEMENT PHYSIQUE CONTINU ──
+# Smooth physical movement toward next grid cell
         target_x = self.nx + 0.5
         target_y = self.ny + 0.5
         vx = target_x - self.x
@@ -589,8 +539,8 @@ class Truck:
 
         step = self.speed * dt
         if step >= dist:
-            self.x = target_x
-            self.y = target_y
+            self.x  = target_x
+            self.y  = target_y
             self.cx = self.nx
             self.cy = self.ny
         else:
@@ -599,26 +549,31 @@ class Truck:
             self.x += self.dir[0] * step
             self.y += self.dir[1] * step
 
+        # Anti ping-pong : si deux camions visent la case de l'autre, le plus grand tid recule
+        for t in all_trucks:
+            if t.tid != self.tid:
+                # Ils se visent mutuellement
+                if (self.nx, self.ny) == (t.cx, t.cy) and (t.nx, t.ny) == (self.cx, self.cy):
+                    if self.tid > t.tid:
+                        # On recule sur notre case actuelle
+                        self.nx, self.ny = self.cx, self.cy
+                        self.x = self.cx + 0.5
+                        self.y = self.cy + 0.5
+                        break
 
-    def draw(self, S):          # ← 4 espaces, même niveau que update
-        S.drawTruckSprite(
-            self.x,
-            self.y,
-            self.dir[0],
-            self.dir[1],
-            self.img_index,
-            self.cargo
-        )
+    def draw(self, S):
+        S.drawTruckSprite(self.x, self.y, self.dir[0], self.dir[1], self.img_index, self.cargo)
 
 
-# ── Éléments de Dessin et d'Arrière-Plan ─────────────────────────────────────
-# ── Éléments de Dessin et d'Arrière-Plan ─────────────────────────────────────
+# ── Background and Map Drawing ────────────────────────────────────────────────
 
-COLOR_ROAD   = (235, 230, 225)
-COLOR_WALL   = (35, 110, 55)   
+COLOR_ROAD = (235, 230, 225)
+COLOR_WALL = (35, 110, 55)
+
 
 def build_background(game, S):
     bg = pygame.Surface((S.W, S.H))
+
     if S.tile_img:
         for x in range(game.mapW):
             for y in range(game.mapH):
@@ -647,6 +602,7 @@ def build_background(game, S):
                     pygame.draw.rect(bg, (200, 100, 50), (px, py, ZOOM, ZOOM))
     return bg
 
+
 def draw_map(game, S, background, trucks):
     S.screen.blit(background, (0, 0))
 
@@ -658,72 +614,80 @@ def draw_map(game, S, background, trucks):
         factories_sorted = sorted(game.factories, key=lambda p: (p[0], p[1]))
         S.drawLargeFactorySprite(factories_sorted[0][0], factories_sorted[0][1])
 
+    # Draw trees: pine = full, dead = half depleted
     for (x, y), wood in game.forests.items():
         if wood == 2:
-            if S.pintree_img: S.screen.blit(S.pintree_img, (x * ZOOM, y * ZOOM))
+            if S.pintree_img:  S.screen.blit(S.pintree_img,  (x * ZOOM, y * ZOOM))
         elif wood == 1:
             if S.deadtree_img: S.screen.blit(S.deadtree_img, (x * ZOOM, y * ZOOM))
-        elif wood == 0:
-            pass  
 
     for t in trucks:
         t.draw(S)
 
+    # Bottom UI panel
     panel_y = game.mapH * ZOOM
     pygame.draw.rect(S.screen, (30, 30, 40), (0, panel_y, S.W, ZOOM))
-    
+
     if S.treasure_icon:
-        S.screen.blit(S.treasure_icon, (10, panel_y + int(ZOOM*0.2)))
-    
+        S.screen.blit(S.treasure_icon, (10, panel_y + int(ZOOM * 0.2)))
+
     ui_text = f"Money: ${game.money}  |  Trucks: {len(trucks)}/{MAX_TRUCKS}"
     text_surf = S.font.render(ui_text, True, (255, 215, 0))
     S.screen.blit(text_surf, (int(2 * ZOOM), panel_y + int(ZOOM * 0.2)))
 
+    # Buy truck button
     btn_x, btn_y, btn_w, btn_h = S.W - 150, panel_y + 5, 145, ZOOM - 10
-    
-    if len(trucks) >= MAX_TRUCKS:
-        btn_color = (80, 40, 40)   
-        btn_text = "MAX TRUCKS"
-    elif game.money < game.truck_price:
-        btn_color = (100, 100, 100) 
-        btn_text = f"Buy Truck (${game.truck_price})"
-    else:
-        btn_color = (50, 180, 70)  
-        btn_text = f"Buy Truck (${game.truck_price})"
-        
-    pygame.draw.rect(S.screen, btn_color, (btn_x, btn_y, btn_w, btn_h), border_radius=5)
-    
-    font_surf = S.font_s.render(btn_text, True, (255, 255, 255))
-    S.screen.blit(font_surf, (btn_x + (btn_w - font_surf.get_width())//2, btn_y + (btn_h - font_surf.get_height())//2))
 
+    if len(trucks) >= MAX_TRUCKS:
+        btn_color = (80, 40, 40)
+        btn_text  = "MAX TRUCKS"
+    elif game.money < game.truck_price:
+        btn_color = (100, 100, 100)
+        btn_text  = f"Buy Truck (${game.truck_price})"
+    else:
+        btn_color = (50, 180, 70)
+        btn_text  = f"Buy Truck (${game.truck_price})"
+
+    pygame.draw.rect(S.screen, btn_color, (btn_x, btn_y, btn_w, btn_h), border_radius=5)
+    font_surf = S.font_s.render(btn_text, True, (255, 255, 255))
+    S.screen.blit(font_surf, (btn_x + (btn_w - font_surf.get_width()) // 2, btn_y + (btn_h - font_surf.get_height()) // 2))
+
+    # Game over overlay
     if game.game_over:
         overlay = pygame.Surface((S.W, S.H), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 200))
         S.screen.blit(overlay, (0, 0))
-        big_font = pygame.font.SysFont("Arial", int(ZOOM * 1.2), bold=True)
-        go_surf = big_font.render("BANKRUPT! GAME OVER", True, (255, 50, 50))
-        S.screen.blit(go_surf, ((S.W - go_surf.get_width())//2, (S.H - go_surf.get_height())//2))
+        big_font = pygame.font.SysFont("Arial", int(ZOOM * 1.1), bold=True)
+
+        # Different message depending on the reason
+        if game.money < 0:
+            message = "BANKRUPT! GAME OVER"
+        else:
+            message = "ALL FORESTS DEPLETED — GAME OVER"
+
+        go_surf = big_font.render(message, True, (255, 50, 50))
+        S.screen.blit(go_surf, ((S.W - go_surf.get_width()) // 2, (S.H - go_surf.get_height()) // 2))
 
 
-# ── Main Game Loop ──────────────────────────────────────────────────────────
+# ── Main Game Loop ────────────────────────────────────────────────────────────
 
 def main():
     pygame.init()
-    
+
     pygame.mixer.init()
     music_name = "music.mp3"
     if not os.path.exists(music_name):
         music_name = os.path.join(ASSETS_DIR, "music.mp3")
-        
+
     if os.path.exists(music_name):
         try:
             pygame.mixer.music.load(music_name)
-            pygame.mixer.music.play(-1) 
+            pygame.mixer.music.play(-1)
         except Exception as e:
-            print(f"Müzik hatası: {e}")
+            print(f"Music error: {e}")
 
-    game = GameData(MAP_TEXT)
-    S = Screen(game.mapW, game.mapH)
+    game       = GameData(MAP_TEXT)
+    S          = Screen(game.mapW, game.mapH)
     background = build_background(game, S)
 
     trucks = []
@@ -741,17 +705,17 @@ def main():
                 mx, my = pygame.mouse.get_pos()
                 panel_y = game.mapH * ZOOM
                 btn_x, btn_y, btn_w, btn_h = S.W - 150, panel_y + 5, 145, ZOOM - 10
-                
+
                 if btn_x <= mx <= btn_x + btn_w and btn_y <= my <= btn_y + btn_h:
                     if len(trucks) < MAX_TRUCKS and game.money >= game.truck_price:
                         game.money -= game.truck_price
-                        game.truck_price *= 2 
+                        game.truck_price *= 2
                         trucks.append(Truck(game, game.depots[0]))
 
         if not game.game_over:
             if game.money < 0:
                 game.game_over = True
-                pygame.mixer.music.stop() 
+                pygame.mixer.music.stop()
 
             for t in trucks:
                 t.update(game, trucks, dt)
@@ -764,11 +728,12 @@ def main():
         draw_map(game, S, background, trucks)
         for ft in game.floating_texts:
             ft.draw(S)
-            
+
         S.show()
 
     pygame.quit()
     sys.exit()
+
 
 if __name__ == "__main__":
     main()
