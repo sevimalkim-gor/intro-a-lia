@@ -624,6 +624,42 @@ def draw_map(game, S, background, trucks):
     for t in trucks:
         t.draw(S)
 
+    font_label = pygame.font.SysFont("Arial", 15, bold=True)
+
+    def draw_label(text, cx, cy, bg_color):
+        txt_surf = font_label.render(text, True, (255, 255, 255))
+        tw, th = txt_surf.get_size()
+        pad_x, pad_y = 8, 4
+        rect_w, rect_h = tw + pad_x * 2, th + pad_y * 2
+        bg_surf = pygame.Surface((rect_w, rect_h), pygame.SRCALPHA)
+        pygame.draw.ellipse(bg_surf, (*bg_color, 180), (0, 0, rect_w, rect_h))
+        S.screen.blit(bg_surf, (cx - rect_w // 2, cy - rect_h // 2))
+        S.screen.blit(txt_surf, (cx - tw // 2, cy - th // 2))
+
+    def center_of(positions):
+        xs = [p[0] for p in positions]
+        ys = [p[1] for p in positions]
+        cx = (min(xs) + max(xs)) // 2 * ZOOM + ZOOM // 2
+        cy = ((min(ys) + max(ys)) // 2 * ZOOM + ZOOM // 2)-int(ZOOM * 0.8)
+        return cx, cy
+
+    forest_tiles = [pos for pos, wood in game.forests.items() if wood > 0]
+    if forest_tiles:
+        cx, cy = center_of(forest_tiles)
+        draw_label("Forêt", cx, cy, (34, 120, 34))
+
+    if game.scieries:
+        cx, cy = center_of(game.scieries)
+        draw_label("Scierie", cx, cy, (160, 100, 30))
+
+    if game.factories:
+        cx, cy = center_of(game.factories)
+        draw_label("Fabrique", cx, cy, (80, 80, 180))
+
+    if game.cities:
+        cx, cy = center_of(game.cities)
+        draw_label("Ville", cx, cy, (180, 60, 60))
+
     # Bottom UI panel
     panel_y = game.mapH * ZOOM
     pygame.draw.rect(S.screen, (30, 30, 40), (0, panel_y, S.W, ZOOM))
