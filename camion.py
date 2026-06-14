@@ -19,7 +19,7 @@ SPAWN_INTERVAL  = 5.0
 DEFAULT_ZOOM    = 45         
 MIN_ZOOM        = 20
 
-# Dossier des images
+# Dossier des ressources (images)
 ASSETS_DIR      = "assets"
 
 
@@ -27,6 +27,10 @@ ASSETS_DIR      = "assets"
 
 @njit(cache=True)
 def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
+    """
+    Calcule la carte des distances à partir des cibles en utilisant l'algorithme Wavefront.
+    Optimisé avec Numba pour des performances maximales.
+    """
     w, h = base_dist.shape
     for x in range(w):
         for y in range(h):
@@ -60,30 +64,43 @@ def compute_distance_map_numba(base_dist, targets_xy, max_iterations, out_dist):
     return iterations
 
 
-# ── NOUVELLE HARİTA YAPISI (20x12) ───────────────────────────────────────────
-# Ortadaki ve kenardaki boşluklara S ve M adımları eklendi
+# ── Structure de la Carte (20x12) ───────────────────────────────────────────
+# Des emplacements pour les scieries (S) et les fabriques (M) ont été ajoutés.
 
+# MAP_TEXT = """
+# ####################
+# #FFFFFF#           #
+# #FFFFFF# ##### ### #
+# ###### # #   # # # #
+# #      # # DD# # # #
+# # SSS      DD# MMM #
+# # SSS  #   ### MMM #
+# # #  ######### ### #
+# # #              # #
+# #     ########## # #
+# #######       #VVVV#
+# ####################
+# """
 MAP_TEXT = """
 ####################
 #FFFFFF#           #
 #FFFFFF# ##### ### #
 ###### # #   # # # #
 #      # # DD# # # #
-# SSS      DD# # M #
-# SSS  #   ### # M #
+# SSS      DD# MMM #
+# SSS  #   ### MMM #
 # #  ######### ### #
 # #              # #
 #     ########## # #
 #######       #VVVV#
 ####################
 """
-
 class GameData:
     def __init__(self, map_text):
         self.map, self.mapW, self.mapH = self._parse(map_text)
         self.base_dist = self._build_base_dist()
 
-        # Initialisation des forêts
+        # Initialisation des forêts (F)
         self.forests = {}
         for x in range(self.mapW):
             for y in range(self.mapH):
@@ -104,14 +121,14 @@ class GameData:
                 if self.map[x, y] == 'M':
                     self.factories.append((x, y))
 
-        # Initialisation des villes
+        # Initialisation des villes (V)
         self.cities = {}
         for x in range(self.mapW):
             for y in range(self.mapH):
                 if self.map[x, y] == 'V':
                     self.cities[(x, y)] = 0
 
-        # Initialisation des dépôts (zone de spawn)
+        # Initialisation des dépôts (D) - Zone de spawn
         self.depots = []
         for x in range(self.mapW):
             for y in range(self.mapH):
@@ -197,7 +214,7 @@ class Screen:
         self.W = nx * ZOOM
         self.H = (ny + 1) * ZOOM 
         self.screen = pygame.display.set_mode((self.W, self.H))
-        pygame.display.set_caption("Transport Tycoon - Lojistik Zinciri")
+        pygame.display.set_caption("Transport Tycoon - Chaîne Logistique")
         self.clock = pygame.time.Clock()
         self.font   = pygame.font.SysFont("Arial", max(12, int(ZOOM * 0.45)), bold=True)
         self.font_s = pygame.font.SysFont("Arial", max(10, int(ZOOM * 0.35)))
@@ -222,34 +239,38 @@ class Screen:
                 img = pygame.transform.scale(img, (target_w, target_h))
                 self.truck_images.append(img)
             except Exception as e:
-                print(f"Erreur : Impossible de charger {path} ! Başarısız. Rapor: {e}")
+                print(f"Erreur : Impossible de charger {path} ! Échec. Rapport : {e}")
                 fallback = pygame.Surface((int(ZOOM * 0.5), int(ZOOM * 0.8)), pygame.SRCALPHA)
                 pygame.draw.rect(fallback, (200, 50, 50), (0, 0, int(ZOOM * 0.5), int(ZOOM * 0.8)), border_radius=3)
                 self.truck_images.append(fallback)
 
-        # ── CHARGEMENT DE BRICKHOUSE.PNG ──
+        # ── CHARGEMENT DE BRICKHOUSE.PNG (Villes) ──
         self.city_asset = None
         city_asset_path = os.path.join(ASSETS_DIR, "BrickHouse.png")
         try:
             self.city_asset = pygame.image.load(city_asset_path).convert_alpha()
             self.city_asset = pygame.transform.scale(self.city_asset, (int(ZOOM * 0.8), int(ZOOM * 0.8)))
         except Exception as e:
-            print(f"Erreur : Impossible de charger BrickHouse.png! {e}")
+            print(f"Erreur : Impossible de charger BrickHouse.png ! {e}")
 
-        # ── CHARGEMENT FACTORY.SVG & ISOMETRIC_OFFICE_5.SVG ──
+        # ── CHARGEMENT DE FACTORY.PNG & ISOMETRIC_OFFICE_5.PNG ──
+        # ── CHARGEMENT DE FACTORY.PNG ──
         self.factory_asset = None
         self.office_asset = None
         try:
             self.factory_asset = pygame.image.load(os.path.join(ASSETS_DIR, "factory.png")).convert_alpha()
-            self.factory_asset = pygame.transform.scale(self.factory_asset, (int(ZOOM * 0.85), int(ZOOM * 0.85)))
+            # On redimensionne pour couvrir 6 cases (3x2). On donne un peu plus de hauteur (2.5) pour l'effet de relief.
+            self.factory_asset = pygame.transform.scale(self.factory_asset, (int(ZOOM * 3), int(ZOOM * 2.5)))
         except Exception as e:
-            print(f"factory.png yüklenemedi: {e}")
+            print(f"Erreur : Impossible de charger factory.png : {e}")
             
+        # ── CHARGEMENT DE ISOMETRIC_OFFICE_5.PNG ──
         try:
             self.office_asset = pygame.image.load(os.path.join(ASSETS_DIR, "isometric_office_5.png")).convert_alpha()
-            self.office_asset = pygame.transform.scale(self.office_asset, (int(ZOOM * 0.85), int(ZOOM * 0.85)))
+            # On redimensionne pour couvrir 6 cases (3x2).
+            self.office_asset = pygame.transform.scale(self.office_asset, (int(ZOOM * 3), int(ZOOM * 2.5)))
         except Exception as e:
-            print(f"isometric_office_5.png yüklenemedi: {e}")
+            print(f"Erreur : Impossible de charger isometric_office_5.png : {e}")
 
         # ── CHARGEMENT DES IMAGES D'ARBRES ──
         self.pintree_img = None
@@ -260,7 +281,7 @@ class Screen:
             self.pintree_img = pygame.transform.scale(pintree, (ZOOM, ZOOM))
             self.deadtree_img = pygame.transform.scale(deadtree, (ZOOM, ZOOM))
         except Exception as e:
-            print(f"Info : İmage yüklenemedi ({e}).")
+            print(f"Info : Impossible de charger les images d'arbres ({e}).")
 
     def grid_to_screen(self, x, y):
         return int(x * ZOOM), int(y * ZOOM)
@@ -299,13 +320,13 @@ class Screen:
         rect = rotated_img.get_rect(center=(cx, cy))
         self.screen.blit(rotated_img, rect.topleft)
 
-        # Kamyonun üstündeki yüke göre renkli nokta çizimi
+        # Dessin d'un point de couleur sur le camion selon le type de cargaison
         if cargo_type == "wood":
-            pygame.draw.circle(self.screen, (139, 90, 43), (cx, cy), 4) # Kahverengi odun
+            pygame.draw.circle(self.screen, (139, 90, 43), (cx, cy), 4) # Bois (Marron)
         elif cargo_type == "planks":
-            pygame.draw.circle(self.screen, (222, 184, 135), (cx, cy), 4) # Sarımsı kereste
+            pygame.draw.circle(self.screen, (222, 184, 135), (cx, cy), 4) # Planches (Jaunâtre)
         elif cargo_type == "furniture":
-            pygame.draw.circle(self.screen, (255, 140, 0), (cx, cy), 4) # Turuncu mobilya
+            pygame.draw.circle(self.screen, (255, 140, 0), (cx, cy), 4) # Meubles (Orange)
 
     def drawCitySprite(self, x, y):
         if self.city_asset:
@@ -319,17 +340,40 @@ class Screen:
             rect = self.factory_asset.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
             self.screen.blit(self.factory_asset, rect.topleft)
 
+    def drawLargeScierieSprite(self, x, y):
+        if self.factory_asset:
+            # x et y correspondent au coin supérieur gauche du bloc de 6 cases (S)
+            sx, sy = self.grid_to_screen(x, y)
+            
+            # On aligne le bas de l'image avec le bas du bloc de 2 cases de hauteur (ZOOM * 2)
+            rect = self.factory_asset.get_rect()
+            rect.bottomleft = (sx, sy + (ZOOM * 2))
+            self.screen.blit(self.factory_asset, rect.topleft)
+
     def drawFactorySprite(self, x, y):
         if self.office_asset:
             sx, sy = self.grid_to_screen(x, y)
             rect = self.office_asset.get_rect(center=(sx + ZOOM // 2, sy + ZOOM // 2))
             self.screen.blit(self.office_asset, rect.topleft)
 
+    def drawLargeFactorySprite(self, x, y):
+            if self.office_asset:
+                # x et y correspondent exactement au coin supérieur gauche du bloc M
+                sx, sy = self.grid_to_screen(x, y)
+                
+                # On réinitialise le rect pour éviter toute superposition ou décalage
+                rect = self.office_asset.get_rect()
+                # On cale le coin supérieur gauche de l'image sur le coin supérieur gauche du grid
+                # On applique un léger offset vertical (- int(ZOOM * 0.5)) uniquement pour l'effet de toit izometrik
+                rect.topleft = (sx, sy - int(ZOOM * 0.5))
+                
+                self.screen.blit(self.office_asset, rect.topleft)
+
     def show(self):
         pygame.display.flip()
 
 
-# ── Classe Camion ───────────────────────────────────────────────────────────
+# ── Classe Camion (Truck) ───────────────────────────────────────────────────
 
 class Truck:
     _id_counter = 0
@@ -348,7 +392,7 @@ class Truck:
         self.speed = TRUCK_SPEED + random.uniform(-0.2, 0.2)
 
         self.cargo = None             # None, "wood", "planks", "furniture"
-        self.state = "seeking_forest" 
+        self.state = "seeking_forest" # État initial
         self.timer = 0.0
         self.target_pos = None
 
@@ -520,15 +564,15 @@ class Truck:
         S.drawTruckSprite(self.x, self.y, self.dir[0], self.dir[1], self.img_index, self.cargo)
 
 
-# ── Çizim ve Arka Plan Elemanları ────────────────────────────────────────────
+# ── Éléments de Dessin et d'Arrière-Plan ─────────────────────────────────────
 
-COLOR_ROAD   = (235, 230, 225)
-COLOR_WALL   = (110, 110, 110)   
+COLOR_ROAD         = (235, 230, 225)
+COLOR_WALL         = (110, 110, 110)   
 COLOR_FOREST_EMPTY = (150, 125, 100)
-COLOR_CITY_BASE = (205, 195, 175)
-COLOR_CITY_DONE = (100, 210, 130)
-COLOR_DEPOT  = (140, 140, 185)   
-COLOR_GRID   = (220, 215, 205)
+COLOR_CITY_BASE    = (205, 195, 175)
+COLOR_CITY_DONE    = (100, 210, 130)
+COLOR_DEPOT        = (140, 140, 185)   
+COLOR_GRID         = (220, 215, 205)
 
 def build_background(game: GameData, S: Screen):
     surf = pygame.Surface((S.W, S.H))
@@ -557,15 +601,28 @@ def build_background(game: GameData, S: Screen):
 def draw_map(game, S, background, trucks, spawn_timer):
     S.screen.blit(background, (0, 0))
 
-    # Hızarhaneleri Çiz (S) -> factory.svg
-    for (x, y) in game.scieries:
-        S.drawScierieSprite(x, y)
+    # ── DESSIN DE LA GRANDE SCIERIE (S) - UNE SEULE ET UNIQUE IMAGE ──
+    if game.scieries:
+        # On trie pour choper le pixel le plus en haut à gauche
+        sorted_s = sorted(game.scieries, key=lambda p: (p[0], p[1]))
+        first_s = sorted_s[0]
+        S.drawLargeScierieSprite(first_s[0], first_s[1])
 
-    # Mobilya Fabrikalarını Çiz (M) -> isometric_office_5.svg
-    for (x, y) in game.factories:
-        S.drawFactorySprite(x, y)
+    # ── DESSIN DE LA GRANDE FABRIQUE DE MEUBLES (M) - UNE SEULE ET UNIQUE IMAGE ──
+    if game.factories:
+        # On trie rigoureusement par axe X puis par axe Y pour choper le pixel le plus en haut à gauche
+        factories_sorted = sorted(game.factories, key=lambda p: (p[0], p[1]))
+        exact_top_left_m = factories_sorted[0]
+        
+        first_m_x = exact_top_left_m[0]
+        first_m_y = exact_top_left_m[1]
+        
+        # ON APPELLE LA FONCTION UNE SEULE FOIS (DÖNGÜ KALDIRILDI)
+        S.drawLargeFactorySprite(first_m_x, first_m_y)
 
-    # Affichage des villes
+    # ── IMPORTANT : Eski "for (x, y) in game.factories:" döngüsü üst üste binmeyi önlemek için tamamen silindi ──
+
+    # Affichage des villes (V)
     for (x, y), count in game.cities.items():
         if count > 0:
             ratio = min(1.0, count / 5.0)
@@ -579,17 +636,17 @@ def draw_map(game, S, background, trucks, spawn_timer):
             
         S.drawCitySprite(x, y)
 
-    # Symboles de forêt
+    # Rendu des symboles de forêt
     for (x, y), wood in game.forests.items():
         if S.pintree_img and S.deadtree_img:
-            if wood == WOOD_PER_FOREST: #2 interactions par arbre
+            if wood == WOOD_PER_FOREST: # 2 interactions restantes
                 S.drawImage(x, y, S.pintree_img)
             elif wood > 0:
                 S.drawImage(x, y, S.deadtree_img)
             else:
                 pass
         else:
-            # Rendu textuel de secours (Fallback) si les images ne chargent pas
+            # Rendu textuel de secours (Fallback) si les images ne sont pas chargées
             if wood == WOOD_PER_FOREST:
                 S.drawText(x, y, "🌲", big=False, centered=True)
             elif wood > 0:
@@ -608,18 +665,17 @@ def draw_map(game, S, background, trucks, spawn_timer):
     remaining = sum(game.forests.values())
     
     if len(trucks) < MAX_TRUCKS:
-        timer_text = f" | Yeni Araç: {max(0.0, spawn_timer):.1f}s"
+        timer_text = f" | Nouveau véhicule : {max(0.0, spawn_timer):.1f}s"
     else:
-        timer_text = " | Garaj Dolu (Maks 5)"
+        timer_text = " | Garage Plein (Max 5)"
 
-    txt = f"Mobilya Teslimatı: {total}  |  Kalan Odun: {remaining}  |  Kamyon: {len(trucks)}/{MAX_TRUCKS}{timer_text}"
+    txt = f"Livraisons : {total}  |  Bois Restant : {remaining}  |  Camions : {len(trucks)}/{MAX_TRUCKS}{timer_text}"
     surf = S.font.render(txt, True, (240, 240, 240))
     S.screen.blit(surf, (15, bar_y + (ZOOM // 2 - surf.get_height() // 2)))
 
     S.show()
 
-
-# ── Boucle Principale ────────────────────────────────────────────────────────
+# ── Boucle Principale (Main Loop) ───────────────────────────────────────────
 
 def main():
     pygame.init()
